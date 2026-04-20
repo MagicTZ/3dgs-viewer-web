@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>3DGS Viewer</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #info {
+      position: fixed; top: 10px; left: 10px; color: white;
+      font-family: monospace; font-size: 14px; background: rgba(0,0,0,0.6);
+      padding: 10px; border-radius: 6px; pointer-events: none; z-index: 10;
+    }
+    #crosshair {
+      position: fixed; width: 12px; height: 12px; border: 2px solid #ff4444;
+      border-radius: 50%; pointer-events: none; z-index: 10;
+      transform: translate(-50%, -50%); display: none;
+    }
+    #exportPanel {
+      position: fixed; top: 10px; right: 10px; color: white;
+      font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.75);
+      padding: 12px 16px; border-radius: 8px; z-index: 20;
+      min-width: 220px;
+    }
+    #exportPanel h3 { margin: 0 0 8px 0; font-size: 15px; color: #44ff44; }
+    #exportPanel label { display: block; margin: 6px 0 2px; }
+    #exportPanel select, #exportPanel input {
+      width: 100%; padding: 4px; margin-bottom: 4px;
+      background: #333; color: white; border: 1px solid #666; border-radius: 4px;
+    }
+    #exportPanel button {
+      width: 100%; padding: 8px; margin-top: 8px; cursor: pointer;
+      background: #44ff44; color: #000; border: none; border-radius: 4px;
+      font-weight: bold; font-size: 14px;
+    }
+    #exportPanel button:hover { background: #66ff66; }
+    #exportPanel button:disabled { background: #666; color: #999; cursor: not-allowed; }
+    #exportProgress {
+      margin-top: 8px; height: 6px; background: #333; border-radius: 3px; overflow: hidden;
+    }
+    #exportProgressBar {
+      height: 100%; width: 0%; background: #44ff44; transition: width 0.1s;
+    }
+    #exportStatus { margin-top: 6px; font-size: 12px; color: #aaa; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.180.0/build/three.module.js",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.0.0/spark.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="info">
+    鼠标左键拖拽: 旋转视角 | 右键拖拽: 平移 | 滚轮: 缩放<br>
+    WASD: 移动 | 双击模型: 设置环绕中心<br>
+    R + 左键拖拽: 围绕中心环绕（左=顺时针, 右=逆时针）<br>
+    <span style="color:#44ff44">+</span>: 添加关键帧 | <span style="color:#44ff44">P</span>: 播放/停止轨迹 | <span style="color:#44ff44">C</span>: 清除所有关键帧<br>
+    <span id="kfCount">关键帧: 0</span> | <span id="playStatus"></span>
+  </div>
+  <div id="crosshair"></div>
+  <div id="exportPanel">
+    <h3>导出视频</h3>
+    <label>分辨率</label>
+    <select id="resSelect">
+      <option value="1080" selected>1080p (1920×1080)</option>
+      <option value="2160">2K (2560×1440)</option>
+      <option value="4320">4K (3840×2160)</option>
+    </select>
+    <label>帧率 (FPS)</label>
+    <input id="fpsInput" type="number" value="30" min="1" max="120">
+    <label>总时长 (秒)</label>
+    <input id="durationInput" type="number" value="5" min="1" max="300" step="0.5">
+    <div id="exportFrameInfo" style="font-size:12px;color:#aaa;margin-top:2px">总帧数: 150</div>
+    <label>码率 (Mbps)</label>
+    <input id="bitrateInput" type="number" value="10" min="1" max="100" step="1">
+    <button id="exportBtn">导出 MP4 视频</button>
+    <div id="exportProgress" style="display:none"><div id="exportProgressBar"></div></div>
+    <div id="exportStatus"></div>
+  </div>
+  <script type="module">
+    import * as THREE from "three";
+    import { SparkRenderer, SplatMesh, SparkControls } from "@sparkjsdev/spark";
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 1000);
+    camera.position.set(0, 0, 3);
+
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const spark = new SparkRenderer({ renderer });
+    scene.add(spark);
+
+    const splats = new SplatMesh({
+      url: "./model.splat",
+      onLoad: (mesh) => {
+        console.log("加载完成，splat 数量:", mesh.numSplats);
+      }
+    });
+    splats.quaternion.set(1, 0, 0, 0);
+    scene.add(splats);
+
+    // ---- 环绕中心标记（小球） ----
+    const markerGeo = new THREE.SphereGeometry(0.03, 16, 16);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.visible = false;
+    scene.add(marker);
+
+    // ---- Spark 原生控件 ----
+    const controls = new SparkControls({ canvas: renderer.domElement });
+
+    // ---- 环绕状态 ----
+    let orbitTarget = new THREE.Vector3(0, 0, 0);
+    let hasOrbitTarget = false;
+    let rKeyDown = false;
+    let orbiting = false;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+    const orbitSpeed = 0.005;
+    const crosshair = document.getElementById("crosshair");
+
+    // ---- 双击射线拾取：设置环绕中心 ----
+    const raycaster = new THREE.Raycaster();
+    renderer.domElement.addEventListener("dblclick", (e) => {
+      const ndc = new THREE.Vector2(
+        (e.clientX / innerWidth) * 2 - 1,
+        -(e.clientY / innerHeight) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const intersects = raycaster.intersectObjects(scene.children);
+      const hit = intersects.find((i) => i.object instanceof SplatMesh || i.object === splats);
+      if (hit) {
+        orbitTarget.copy(hit.point);
+        hasOrbitTarget = true;
+        marker.position.copy(hit.point);
+        marker.visible = true;
+        console.log("环绕中心已设置:", hit.point);
+      }
+    });
+
+    // ---- R 键 + 左键拖拽环绕 ----
+    let orbitTransition = 0;       // 0~1 过渡进度
+    const transitionSpeed = 1.0;   // 过渡速度（越大越快，约 0.3 秒完成）
+    let startQuaternion = new THREE.Quaternion();
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "r" || e.key === "R") rKeyDown = true;
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.key === "r" || e.key === "R") {
+        rKeyDown = false;
+        orbiting = false;
+        orbitTransition = 0;
+        crosshair.style.display = "none";
+      }
+    });
+
+    renderer.domElement.addEventListener("mousedown", (e) => {
+      if (rKeyDown && e.button === 0 && hasOrbitTarget) {
+        orbiting = true;
+        orbitTransition = 0;
+        // 记录当前相机朝向，用于平滑过渡
+        startQuaternion.copy(camera.quaternion);
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        // 在屏幕上显示环绕中心位置
+        const projected = orbitTarget.clone().project(camera);
+        crosshair.style.left = ((projected.x + 1) / 2 * innerWidth) + "px";
+        crosshair.style.top = ((-projected.y + 1) / 2 * innerHeight) + "px";
+        crosshair.style.display = "block";
+      }
+    });
+
+    window.addEventListener("mouseup", (e) => {
+      if (e.button === 0) {
+        orbiting = false;
+        orbitTransition = 0;
+        crosshair.style.display = "none";
+      }
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!orbiting) return;
+      const deltaX = e.clientX - lastMouseX;
+      const deltaY = e.clientY - lastMouseY;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+
+      const offset = camera.position.clone().sub(orbitTarget);
+
+      // 水平环绕（绕 Y 轴）：向左 = 顺时针，向右 = 逆时针
+      const azimuth = -deltaX * orbitSpeed;
+      const cosA = Math.cos(azimuth);
+      const sinA = Math.sin(azimuth);
+      const newX = offset.x * cosA - offset.z * sinA;
+      const newZ = offset.x * sinA + offset.z * cosA;
+      offset.x = newX;
+      offset.z = newZ;
+
+      // 垂直环绕（绕水平轴）：向上拖 = 升高视角，向下拖 = 降低视角
+      const elevation = -deltaY * orbitSpeed;
+      const horizontalDist = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+      const currentElevAngle = Math.atan2(offset.y, horizontalDist);
+      const newElevAngle = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, currentElevAngle + elevation));
+      const radius = offset.length();
+      offset.y = radius * Math.sin(newElevAngle);
+      const newHDist = radius * Math.cos(newElevAngle);
+      const hScale = horizontalDist > 0.001 ? newHDist / horizontalDist : 0;
+      offset.x *= hScale;
+      offset.z *= hScale;
+
+      camera.position.copy(orbitTarget).add(offset);
+
+      // 计算目标朝向（lookAt 的结果），但不直接应用
+      const targetQuaternion = new THREE.Quaternion();
+      const lookAtMatrix = new THREE.Matrix4().lookAt(camera.position, orbitTarget, camera.up);
+      targetQuaternion.setFromRotationMatrix(lookAtMatrix);
+
+      if (orbitTransition < 1) {
+        // 过渡阶段：从初始朝向平滑 slerp 到 lookAt 朝向
+        orbitTransition = Math.min(1, orbitTransition + transitionSpeed * 0.016);
+        camera.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, orbitTransition);
+      } else {
+        // 过渡完成，直接 lookAt
+        camera.quaternion.copy(targetQuaternion);
+      }
+    });
+
+    // ---- 关键帧与轨迹播放 ----
+    const keyframes = [];           // { position: Vector3, quaternion: Quaternion }
+    const kfMarkers = [];           // 关键帧标记小球
+    let pathLine = null;            // 轨迹线
+    let playing = false;
+    let playT = 0;
+    const playSpeed = 0.15;         // 播放速度（每秒走过总长度的比例）
+    let playLastTime = 0;
+    let positionCurve = null;       // CatmullRomCurve3
+    const kfCountEl = document.getElementById("kfCount");
+    const playStatusEl = document.getElementById("playStatus");
+
+    function addKeyframe() {
+      const kf = {
+        position: camera.position.clone(),
+        quaternion: camera.quaternion.clone()
+      };
+      keyframes.push(kf);
+
+      // 在场景中添加关键帧标记（蓝色小球）
+      const geo = new THREE.SphereGeometry(0.02, 12, 12);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x4488ff });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.copy(kf.position);
+      scene.add(m);
+      kfMarkers.push(m);
+
+      kfCountEl.textContent = "关键帧: " + keyframes.length;
+      console.log("关键帧 #" + keyframes.length + " 已添加", kf.position);
+
+      // 有 >= 2 个关键帧时更新轨迹线
+      updatePathLine();
+    }
+
+    function updatePathLine() {
+      // 移除旧轨迹线
+      if (pathLine) {
+        scene.remove(pathLine);
+        pathLine.geometry.dispose();
+        pathLine.material.dispose();
+        pathLine = null;
+      }
+      if (keyframes.length < 2) return;
+
+      positionCurve = new THREE.CatmullRomCurve3(
+        keyframes.map(k => k.position.clone()),
+        false,   // 不闭合
+        'catmullrom',
+        0.5      // tension
+      );
+      const points = positionCurve.getPoints(keyframes.length * 50);
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 2 });
+      pathLine = new THREE.Line(geo, mat);
+      scene.add(pathLine);
+    }
+
+    function clearKeyframes() {
+      keyframes.length = 0;
+      kfMarkers.forEach(m => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+      kfMarkers.length = 0;
+      if (pathLine) {
+        scene.remove(pathLine);
+        pathLine.geometry.dispose();
+        pathLine.material.dispose();
+        pathLine = null;
+      }
+      positionCurve = null;
+      playing = false;
+      playT = 0;
+      kfCountEl.textContent = "关键帧: 0";
+      playStatusEl.textContent = "";
+      console.log("关键帧已清除");
+    }
+
+    function togglePlay() {
+      if (keyframes.length < 2) {
+        playStatusEl.textContent = "至少需要 2 个关键帧";
+        return;
+      }
+      playing = !playing;
+      if (playing) {
+        playT = 0;
+        playLastTime = performance.now();
+        playStatusEl.textContent = "▶ 播放中...";
+      } else {
+        playStatusEl.textContent = "⏸ 已停止";
+      }
+    }
+
+    function updatePlayback(time) {
+      if (!playing || !positionCurve) return;
+      const dt = (time - playLastTime) / 1000;
+      playLastTime = time;
+      playT += playSpeed * dt;
+
+      if (playT >= 1) {
+        playT = 1;
+        playing = false;
+        playStatusEl.textContent = "✓ 播放完成";
+      }
+
+      // 位置：沿样条曲线匀速移动
+      camera.position.copy(positionCurve.getPointAt(playT));
+
+      // 朝向：在关键帧之间做 slerp
+      const totalSegments = keyframes.length - 1;
+      const rawSegment = playT * totalSegments;
+      const segIndex = Math.min(Math.floor(rawSegment), totalSegments - 1);
+      const segT = rawSegment - segIndex;
+      camera.quaternion.slerpQuaternions(
+        keyframes[segIndex].quaternion,
+        keyframes[segIndex + 1].quaternion,
+        segT
+      );
+
+      playStatusEl.textContent = "▶ " + Math.round(playT * 100) + "%";
+    }
+
+    // + 键添加关键帧，P 键播放，C 键清除
+    window.addEventListener("keydown", (e) => {
+      if (playing && e.key !== "p" && e.key !== "P") return; // 播放中只响应 P 键
+      if (e.key === "+" || e.key === "=") {
+        addKeyframe();
+      } else if (e.key === "p" || e.key === "P") {
+        togglePlay();
+      } else if (e.key === "c" || e.key === "C") {
+        clearKeyframes();
+      }
+    });
+
+    // ---- 导出 MP4 视频 ----
+    const resolutions = {
+      '1080': { w: 1920, h: 1080 },
+      '2160': { w: 2560, h: 1440 },
+      '4320': { w: 3840, h: 2160 },
+    };
+    const resSelect = document.getElementById('resSelect');
+    const fpsInput = document.getElementById('fpsInput');
+    const durationInput = document.getElementById('durationInput');
+    const bitrateInput = document.getElementById('bitrateInput');
+    const exportBtn = document.getElementById('exportBtn');
+    const exportProgress = document.getElementById('exportProgress');
+    const exportProgressBar = document.getElementById('exportProgressBar');
+    const exportStatusEl = document.getElementById('exportStatus');
+    const exportFrameInfo = document.getElementById('exportFrameInfo');
+    let exporting = false;
+
+    function updateFrameInfo() {
+      const fps = parseInt(fpsInput.value) || 30;
+      const dur = parseFloat(durationInput.value) || 5;
+      exportFrameInfo.textContent = '总帧数: ' + Math.round(fps * dur);
+    }
+    fpsInput.addEventListener('input', updateFrameInfo);
+    durationInput.addEventListener('input', updateFrameInfo);
+    resSelect.addEventListener('change', updateFrameInfo);
+
+    function hideOverlays() {
+      if (pathLine) pathLine.visible = false;
+      kfMarkers.forEach(m => m.visible = false);
+      marker.visible = false;
+    }
+    function restoreOverlays() {
+      if (pathLine) pathLine.visible = true;
+      kfMarkers.forEach(m => m.visible = true);
+      // marker 只在有 orbitTarget 时显示
+      if (hasOrbitTarget) marker.visible = true;
+    }
+
+    exportBtn.addEventListener('click', async () => {
+      if (exporting) return;
+      if (keyframes.length < 2 || !positionCurve) {
+        exportStatusEl.textContent = '请先添加至少 2 个关键帧';
+        return;
+      }
+
+      // 检测 WebCodecs 支持
+      if (typeof VideoEncoder === 'undefined') {
+        exportStatusEl.textContent = '浏览器不支持 WebCodecs，请使用 Chrome/Edge';
+        return;
+      }
+
+      exporting = true;
+      exportBtn.disabled = true;
+      exportProgress.style.display = 'block';
+      exportStatusEl.textContent = '加载编码器...';
+
+      // 动态加载 mp4-muxer
+      let mp4Muxer;
+      try {
+        mp4Muxer = await import('https://esm.sh/mp4-muxer@5');
+      } catch (err) {
+        exportStatusEl.textContent = '加载 mp4-muxer 失败: ' + err.message;
+        exporting = false;
+        exportBtn.disabled = false;
+        return;
+      }
+
+      const res = resolutions[resSelect.value];
+      const fps = Math.max(1, parseInt(fpsInput.value) || 30);
+      const duration = Math.max(0.5, parseFloat(durationInput.value) || 5);
+      const bitrate = Math.max(1, parseInt(bitrateInput.value) || 10) * 1_000_000;
+      const totalFrames = Math.round(fps * duration);
+
+      // 根据分辨率自动选择 AVC Level
+      const pixels = res.w * res.h;
+      const codecString = pixels > 5652480 ? 'avc1.640034'
+                        : pixels > 2097152 ? 'avc1.640032'
+                        : 'avc1.640028';
+
+      // 初始化 muxer
+      const muxer = new mp4Muxer.Muxer({
+        target: new mp4Muxer.ArrayBufferTarget(),
+        video: { codec: 'avc', width: res.w, height: res.h },
+        fastStart: 'in-memory',
+      });
+
+      // 初始化 encoder
+      let encodeDone = false;
+      const encoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: (e) => { exportStatusEl.textContent = '编码错误: ' + e.message; },
+      });
+      encoder.configure({
+        codec: codecString,
+        width: res.w,
+        height: res.h,
+        bitrate: bitrate,
+        framerate: fps,
+      });
+
+      // 保存当前状态
+      const origW = renderer.domElement.width;
+      const origH = renderer.domElement.height;
+      const origAspect = camera.aspect;
+      const origPos = camera.position.clone();
+      const origQuat = camera.quaternion.clone();
+
+      // 调整渲染器分辨率
+      renderer.setSize(res.w, res.h);
+      camera.aspect = res.w / res.h;
+      camera.updateProjectionMatrix();
+
+      // 隐藏轨迹线和标记
+      hideOverlays();
+
+      exportStatusEl.textContent = '渲染中... 0/' + totalFrames;
+
+      for (let i = 0; i <= totalFrames; i++) {
+        const t = i / totalFrames;
+
+        camera.position.copy(positionCurve.getPointAt(Math.min(t, 1)));
+
+        const totalSegments = keyframes.length - 1;
+        const rawSeg = t * totalSegments;
+        const segIdx = Math.min(Math.floor(rawSeg), totalSegments - 1);
+        const segT = rawSeg - segIdx;
+        camera.quaternion.slerpQuaternions(
+          keyframes[segIdx].quaternion,
+          keyframes[segIdx + 1].quaternion,
+          segT
+        );
+
+        renderer.render(scene, camera);
+
+        // 编码帧
+        const bitmap = await createImageBitmap(renderer.domElement);
+        const timestamp = Math.round(i * (1_000_000 / fps));
+        const frame = new VideoFrame(bitmap, { timestamp });
+        const keyFrame = i % (fps * 2) === 0; // 每2秒一个关键帧
+        encoder.encode(frame, { keyFrame });
+        frame.close();
+        bitmap.close();
+
+        const pct = Math.round((i / totalFrames) * 100);
+        exportProgressBar.style.width = pct + '%';
+        exportStatusEl.textContent = '渲染中... ' + (i + 1) + '/' + (totalFrames + 1) + ' (' + pct + '%)';
+
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      // 完成编码
+      exportStatusEl.textContent = '正在合成视频...';
+      await encoder.flush();
+      encoder.close();
+      muxer.finalize();
+
+      // 恢复场景
+      restoreOverlays();
+      renderer.setSize(origW, origH);
+      camera.aspect = origAspect;
+      camera.updateProjectionMatrix();
+      camera.position.copy(origPos);
+      camera.quaternion.copy(origQuat);
+
+      // 下载 MP4
+      const mp4Blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(mp4Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'render_' + resSelect.value + 'p_' + fps + 'fps.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      exporting = false;
+      exportBtn.disabled = false;
+      const sizeMB = (mp4Blob.size / 1048576).toFixed(1);
+      exportStatusEl.textContent = '✓ 导出完成！' + sizeMB + ' MB, 共 ' + (totalFrames + 1) + ' 帧';
+    });
+
+    // ---- 窗口大小调整 ----
+    window.addEventListener("resize", () => {
+      if (exporting) return;
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ---- 渲染循环 ----
+    renderer.setAnimationLoop((time) => {
+      if (exporting) return;
+      if (playing) {
+        updatePlayback(time);
+      } else if (!orbiting) {
+        controls.update(camera);
+      }
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
