@@ -51,22 +51,6 @@ npx serve .
 
 然后在浏览器打开 `http://localhost:8080`。
 
-如果你后续要部署到 GitHub Pages，也可以直接把静态文件上传到仓库并启用 Pages，但模型文件体积较大时建议改用外部存储或 Git LFS。
-
-## 仓库结构建议
-
-公开仓库建议至少保留以下文件：
-
-```text
-your-3dgs-viewer/
-├── index.html
-├── README.md
-├── LICENSE
-└── model.splat            # 可选：示例模型，若体积合适
-```
-
-如果你的模型不方便公开，推荐不要直接提交大文件，而是在 `README.md` 中说明模型获取方式，或使用外部链接。
-
 ## 基础操作
 
 | 操作 | 功能 |
