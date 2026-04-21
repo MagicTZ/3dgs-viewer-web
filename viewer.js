@@ -8,11 +8,25 @@ const HISTORY_LIMIT = 50;
 const ORBIT_SPEED = 0.005;
 const ORBIT_TRANSITION_SPEED = 1.0;
 const LOOK_SPEED = 0.004;
+const KEYBOARD_LOOK_SPEED = 1.8;
 const HIDDEN_SPLAT_SCALE = 1e-5;
 const SH_C0 = 0.28209479177387814;
 const WHEEL_DOLLY_FACTOR = 0.035;
 const WHEEL_DOLLY_MIN_STEP = 0.015;
 const WHEEL_DOLLY_MAX_UNITS = 2.0;
+const SHOT_MIN_RADIUS = 0.08;
+const SHOT_PATH_COLOR = 0x7cf6c7;
+const SHOT_POINT_COLOR = 0x71cdff;
+const SHOT_POINT_SELECTED_COLOR = 0xffc857;
+const SHOT_PIVOT_COLOR = 0x58f0ff;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const SHOT_PICK_SCREEN_RADIUS_PX = 22;
+
+const EXPORT_RESOLUTIONS = {
+  "1080": { width: 1920, height: 1080 },
+  "2160": { width: 2560, height: 1440 },
+  "4320": { width: 3840, height: 2160 }
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101418);
@@ -27,7 +41,9 @@ document.body.appendChild(renderer.domElement);
 const spark = new SparkRenderer({ renderer });
 scene.add(spark);
 
-const infoEl = document.getElementById("info");
+const shotHelperRoot = new THREE.Group();
+scene.add(shotHelperRoot);
+
 const crosshairEl = document.getElementById("crosshair");
 const selectionRectEl = document.getElementById("selectionRect");
 const brushCursorEl = document.getElementById("brushCursor");
@@ -59,18 +75,24 @@ const saveStatusEl = document.getElementById("saveStatus");
 const activeToolLabelEl = document.getElementById("activeToolLabel");
 const selectionCountEl = document.getElementById("selectionCount");
 const deletedCountEl = document.getElementById("deletedCount");
+const shotPanelEl = document.getElementById("shotPanel");
+const shotModeBadgeEl = document.getElementById("shotModeBadge");
+const togglePlannerBtn = document.getElementById("togglePlannerBtn");
+const insertShotBtn = document.getElementById("insertShotBtn");
+const deleteShotBtn = document.getElementById("deleteShotBtn");
+const clearShotsBtn = document.getElementById("clearShotsBtn");
+const shotHintEl = document.getElementById("shotHint");
+const selectedShotLabelEl = document.getElementById("selectedShotLabel");
+const shotPointCountEl = document.getElementById("shotPointCount");
+const shotPivotLabelEl = document.getElementById("shotPivotLabel");
+const deleteModeLabelEl = document.getElementById("deleteModeLabel");
 
 const controls = new SparkControls({ canvas: renderer.domElement });
 controls.pointerControls.enable = false;
 
-const markerGeo = new THREE.SphereGeometry(0.03, 16, 16);
-const markerMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-const marker = new THREE.Mesh(markerGeo, markerMat);
-marker.visible = false;
-scene.add(marker);
-
 const raycaster = new THREE.Raycaster();
 const orbitTarget = new THREE.Vector3();
+const shotPivot = new THREE.Vector3();
 const startQuaternion = new THREE.Quaternion();
 const tempMatrix = new THREE.Matrix4();
 const tempVecA = new THREE.Vector3();
@@ -78,20 +100,39 @@ const tempVecB = new THREE.Vector3();
 const tempVecC = new THREE.Vector3();
 const tempQuat = new THREE.Quaternion();
 const tempColor = new THREE.Color();
+const tempVec2A = new THREE.Vector2();
+const tempVec2B = new THREE.Vector2();
+const tempViewportSize = new THREE.Vector2();
 
 const keyframes = [];
-const kfMarkers = [];
 let pathLine = null;
 let positionCurve = null;
 let playing = false;
 let playT = 0;
 let playLastTime = 0;
-const playSpeed = 0.15;
+let playbackPreviewLockedAspect = false;
 
 let exporting = false;
 let hasOrbitTarget = false;
+let hasShotPivot = false;
 let orbitTransition = 0;
 let rKeyDown = false;
+
+const shotState = {
+  plannerMode: false,
+  points: [],
+  selectedIndex: -1,
+  sceneRadius: 1,
+  helperBaseScale: 0.05,
+  helperMinScale: 0.02,
+  helperMaxScale: 0.08,
+  visuals: [],
+  helperVisible: true,
+  helperActivated: false
+};
+
+const shotPivotMarker = createShotPivotMarker();
+shotHelperRoot.add(shotPivotMarker.group);
 
 const editState = {
   ready: false,
@@ -131,10 +172,17 @@ const pointerState = {
   rectVisible: false
 };
 
+const keyboardLookState = {
+  left: false,
+  right: false,
+  up: false,
+  down: false
+};
+
 const splats = new SplatMesh({
   url: "./model.ply",
   onLoad: (mesh) => {
-    console.log("加载完成，splat 数量:", mesh.numSplats);
+    alignSplatSceneToWorldUp(mesh);
     const focus = autoFocusMesh(mesh);
     initializeEditing(mesh, focus);
   }
@@ -167,19 +215,514 @@ function toolLabel(tool) {
   return "Picker";
 }
 
-function resetPointerControlsState() {
-  const pointerControls = controls.pointerControls;
-  pointerControls.rotating = null;
-  pointerControls.sliding = null;
-  pointerControls.dualPress = false;
-  pointerControls.scroll.set(0, 0, 0);
-  pointerControls.rotateVelocity.set(0, 0, 0);
-  pointerControls.moveVelocity.set(0, 0, 0);
+function normalizeAngle(angle) {
+  return THREE.MathUtils.euclideanModulo(angle + Math.PI, Math.PI * 2) - Math.PI;
 }
 
-function updateInfoPanel() {
-  const editText = editState.editMode ? `编辑模式: ${toolLabel(editState.activeTool)}` : "编辑模式: 关闭";
-  infoEl.title = editText;
+function disposeSprite(sprite) {
+  if (sprite.material.map) {
+    sprite.material.map.dispose();
+  }
+  sprite.material.dispose();
+}
+
+function createLineMaterial(color) {
+  return new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.95,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false
+  });
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function createLabelSprite(
+  text,
+  {
+    background = "rgba(26, 38, 48, 0.88)",
+    border = "#71cdff",
+    color = "#ffffff",
+    width = 256,
+    height = 128,
+    fontSize = 52
+  } = {}
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  drawRoundedRect(ctx, 8, 8, width - 16, height - 16, 28);
+  ctx.fillStyle = background;
+  ctx.fill();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = border;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = `700 ${fontSize}px monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, width * 0.5, height * 0.56);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.renderOrder = 1200;
+  return sprite;
+}
+
+function createCircleLoop(radius, color, segments = 48) {
+  const points = [];
+  for (let index = 0; index < segments; index += 1) {
+    const angle = (index / segments) * Math.PI * 2;
+    points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0));
+  }
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const line = new THREE.LineLoop(geometry, createLineMaterial(color));
+  line.renderOrder = 1100;
+  return line;
+}
+
+function createShotPivotMarker() {
+  const group = new THREE.Group();
+  const ring = createCircleLoop(1, SHOT_PIVOT_COLOR, 64);
+  const crossGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-1.18, 0, 0),
+    new THREE.Vector3(1.18, 0, 0),
+    new THREE.Vector3(0, -1.18, 0),
+    new THREE.Vector3(0, 1.18, 0)
+  ]);
+  const cross = new THREE.LineSegments(crossGeometry, createLineMaterial(SHOT_PIVOT_COLOR));
+  cross.renderOrder = 1100;
+
+  const label = createLabelSprite("Pivot", {
+    background: "rgba(11, 35, 42, 0.92)",
+    border: "#58f0ff",
+    color: "#dffcff",
+    width: 300,
+    height: 120,
+    fontSize: 42
+  });
+  label.position.set(0, 1.45, 0);
+  label.scale.set(1.55, 0.62, 1);
+
+  group.add(ring, cross, label);
+  group.visible = false;
+  return { group, label };
+}
+
+function createShotPointVisual(index) {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 14, 14),
+    new THREE.MeshBasicMaterial({
+      color: SHOT_POINT_COLOR,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false
+    })
+  );
+  body.renderOrder = 1100;
+
+  const pickMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.8, 10, 10),
+    new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false
+    })
+  );
+  pickMesh.userData.shotPointIndex = index;
+
+  const label = createLabelSprite(String(index + 1));
+  label.position.set(0, 0.62, 0);
+  label.scale.set(1.2, 0.58, 1);
+
+  const linkPositions = new Float32Array(6);
+  const linkGeometry = new THREE.BufferGeometry();
+  linkGeometry.setAttribute("position", new THREE.BufferAttribute(linkPositions, 3));
+  const linkLine = new THREE.Line(linkGeometry, createLineMaterial(SHOT_POINT_COLOR));
+  linkLine.renderOrder = 1050;
+  linkLine.material.opacity = 0.32;
+
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 1.1, SHOT_POINT_COLOR, 0.34, 0.2);
+  arrow.line.material.depthTest = false;
+  arrow.line.material.depthWrite = false;
+  arrow.line.material.toneMapped = false;
+  arrow.line.material.transparent = true;
+  arrow.line.material.opacity = 0;
+  arrow.line.renderOrder = 1100;
+  arrow.line.visible = false;
+  arrow.cone.material.depthTest = false;
+  arrow.cone.material.depthWrite = false;
+  arrow.cone.material.toneMapped = false;
+  arrow.cone.material.transparent = true;
+  arrow.cone.material.opacity = 0.98;
+  arrow.cone.renderOrder = 1100;
+
+  group.add(linkLine, arrow, body, pickMesh, label);
+  group.visible = false;
+  shotHelperRoot.add(group);
+
+  return {
+    group,
+    body,
+    pickMesh,
+    label,
+    linkLine,
+    linkPositions,
+    arrow,
+    labelText: "",
+    selected: false
+  };
+}
+
+function disposeShotPointVisual(visual) {
+  visual.group.removeFromParent();
+  visual.body.geometry.dispose();
+  visual.body.material.dispose();
+  visual.pickMesh.geometry.dispose();
+  visual.pickMesh.material.dispose();
+  visual.linkLine.geometry.dispose();
+  visual.linkLine.material.dispose();
+  visual.arrow.line.geometry.dispose();
+  visual.arrow.line.material.dispose();
+  visual.arrow.cone.geometry.dispose();
+  visual.arrow.cone.material.dispose();
+  disposeSprite(visual.label);
+}
+
+function projectWorldToScreen(worldPoint, target = new THREE.Vector2()) {
+  tempVecA.copy(worldPoint).project(camera);
+  if (!Number.isFinite(tempVecA.x) || !Number.isFinite(tempVecA.y) || !Number.isFinite(tempVecA.z)) {
+    return null;
+  }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const width = rect.width || renderer.domElement.clientWidth || innerWidth;
+  const height = rect.height || renderer.domElement.clientHeight || innerHeight;
+  target.set(
+    rect.left + (tempVecA.x * 0.5 + 0.5) * width,
+    rect.top + (-tempVecA.y * 0.5 + 0.5) * height
+  );
+  return target;
+}
+
+function getWorldUnitsPerPixel(worldPoint) {
+  const viewportHeight = Math.max(renderer.domElement.clientHeight || innerHeight, 1);
+  const distance = Math.max(camera.position.distanceTo(worldPoint), 0.1);
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const worldHeight = 2 * Math.tan(fov * 0.5) * distance;
+  return worldHeight / viewportHeight;
+}
+
+function getSelectedOutputResolution() {
+  return EXPORT_RESOLUTIONS[resSelect.value] ?? EXPORT_RESOLUTIONS["1080"];
+}
+
+function getSelectedOutputAspect() {
+  const resolution = getSelectedOutputResolution();
+  return resolution.width / resolution.height;
+}
+
+function setPlaybackPreviewAspectLocked(locked) {
+  playbackPreviewLockedAspect = locked;
+  if (exporting) {
+    return;
+  }
+  camera.aspect = locked ? getSelectedOutputAspect() : innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+
+function getAspectViewport(aspect, width, height) {
+  let viewportWidth = width;
+  let viewportHeight = Math.round(width / aspect);
+
+  if (viewportHeight > height) {
+    viewportHeight = height;
+    viewportWidth = Math.round(height * aspect);
+  }
+
+  return {
+    x: Math.floor((width - viewportWidth) * 0.5),
+    y: Math.floor((height - viewportHeight) * 0.5),
+    width: Math.max(1, viewportWidth),
+    height: Math.max(1, viewportHeight)
+  };
+}
+
+function renderSceneFrame() {
+  renderer.getSize(tempViewportSize);
+  const width = Math.max(Math.round(tempViewportSize.x), 1);
+  const height = Math.max(Math.round(tempViewportSize.y), 1);
+
+  if (!playbackPreviewLockedAspect) {
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    renderer.render(scene, camera);
+    return;
+  }
+
+  const viewport = getAspectViewport(getSelectedOutputAspect(), width, height);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, width, height);
+  renderer.clear();
+  renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+  renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
+  renderer.setScissorTest(true);
+  renderer.render(scene, camera);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, width, height);
+}
+
+function writeFlippedRgbaToImageData(sourcePixels, imageData, width, height) {
+  const rowBytes = width * 4;
+  const targetPixels = imageData.data;
+  for (let row = 0; row < height; row += 1) {
+    const srcOffset = (height - 1 - row) * rowBytes;
+    const dstOffset = row * rowBytes;
+    targetPixels.set(sourcePixels.subarray(srcOffset, srcOffset + rowBytes), dstOffset);
+  }
+}
+
+function jacobiDiagonalizeSymmetric3(matrix) {
+  const a = matrix.slice();
+  const v = [
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1
+  ];
+
+  for (let iter = 0; iter < 12; iter += 1) {
+    let p = 0;
+    let q = 1;
+    let maxAbs = Math.abs(a[1]);
+
+    if (Math.abs(a[2]) > maxAbs) {
+      p = 0;
+      q = 2;
+      maxAbs = Math.abs(a[2]);
+    }
+    if (Math.abs(a[5]) > maxAbs) {
+      p = 1;
+      q = 2;
+      maxAbs = Math.abs(a[5]);
+    }
+    if (maxAbs < 1e-10) {
+      break;
+    }
+
+    const appIndex = p * 3 + p;
+    const aqqIndex = q * 3 + q;
+    const apqIndex = p * 3 + q;
+    const app = a[appIndex];
+    const aqq = a[aqqIndex];
+    const apq = a[apqIndex];
+
+    const tau = (aqq - app) / (2 * apq);
+    const t = Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
+    const c = 1 / Math.sqrt(1 + t * t);
+    const s = t * c;
+
+    a[appIndex] = app - t * apq;
+    a[aqqIndex] = aqq + t * apq;
+    a[apqIndex] = 0;
+    a[q * 3 + p] = 0;
+
+    for (let r = 0; r < 3; r += 1) {
+      if (r === p || r === q) {
+        continue;
+      }
+
+      const arpIndex = r * 3 + p;
+      const arqIndex = r * 3 + q;
+      const arp = a[arpIndex];
+      const arq = a[arqIndex];
+      const nextArp = c * arp - s * arq;
+      const nextArq = c * arq + s * arp;
+
+      a[arpIndex] = nextArp;
+      a[p * 3 + r] = nextArp;
+      a[arqIndex] = nextArq;
+      a[q * 3 + r] = nextArq;
+    }
+
+    for (let r = 0; r < 3; r += 1) {
+      const vrpIndex = r * 3 + p;
+      const vrqIndex = r * 3 + q;
+      const vrp = v[vrpIndex];
+      const vrq = v[vrqIndex];
+      v[vrpIndex] = c * vrp - s * vrq;
+      v[vrqIndex] = c * vrq + s * vrp;
+    }
+  }
+
+  return {
+    eigenvalues: [a[0], a[4], a[8]],
+    eigenvectors: v
+  };
+}
+
+function estimateSceneUpFromWorldCenters(worldCenters, count) {
+  const sampleLimit = Math.min(count, 4096);
+  const step = Math.max(1, Math.floor(count / sampleLimit));
+
+  let sampleCount = 0;
+  let meanX = 0;
+  let meanY = 0;
+  let meanZ = 0;
+
+  for (let index = 0; index < count; index += step) {
+    const offset = index * 3;
+    meanX += worldCenters[offset];
+    meanY += worldCenters[offset + 1];
+    meanZ += worldCenters[offset + 2];
+    sampleCount += 1;
+  }
+
+  if (sampleCount < 3) {
+    return new THREE.Vector3(0, 1, 0);
+  }
+
+  meanX /= sampleCount;
+  meanY /= sampleCount;
+  meanZ /= sampleCount;
+
+  let xx = 0;
+  let xy = 0;
+  let xz = 0;
+  let yy = 0;
+  let yz = 0;
+  let zz = 0;
+
+  for (let index = 0; index < count; index += step) {
+    const offset = index * 3;
+    const dx = worldCenters[offset] - meanX;
+    const dy = worldCenters[offset + 1] - meanY;
+    const dz = worldCenters[offset + 2] - meanZ;
+
+    xx += dx * dx;
+    xy += dx * dy;
+    xz += dx * dz;
+    yy += dy * dy;
+    yz += dy * dz;
+    zz += dz * dz;
+  }
+
+  const { eigenvalues, eigenvectors } = jacobiDiagonalizeSymmetric3([
+    xx, xy, xz,
+    xy, yy, yz,
+    xz, yz, zz
+  ]);
+
+  let minIndex = 0;
+  if (eigenvalues[1] < eigenvalues[minIndex]) {
+    minIndex = 1;
+  }
+  if (eigenvalues[2] < eigenvalues[minIndex]) {
+    minIndex = 2;
+  }
+
+  const estimatedUp = new THREE.Vector3(
+    eigenvectors[minIndex],
+    eigenvectors[3 + minIndex],
+    eigenvectors[6 + minIndex]
+  );
+
+  if (estimatedUp.lengthSq() < 1e-10) {
+    return WORLD_UP.clone();
+  }
+
+  estimatedUp.normalize();
+  if (estimatedUp.dot(camera.up) < 0) {
+    estimatedUp.negate();
+  }
+  return estimatedUp;
+}
+
+function estimateSceneUpFromMesh(mesh) {
+  const count = mesh.numSplats ?? 0;
+  if (count < 3) {
+    return WORLD_UP.clone();
+  }
+
+  const sampleLimit = Math.min(count, 4096);
+  const step = Math.max(1, Math.floor(count / sampleLimit));
+  const sampledCenters = new Float32Array(sampleLimit * 3);
+
+  mesh.updateWorldMatrix(true, false);
+  const worldMatrix = mesh.matrixWorld.clone();
+  let sampleCount = 0;
+
+  mesh.forEachSplat((index, center) => {
+    if (sampleCount >= sampleLimit || index % step !== 0) {
+      return;
+    }
+
+    tempVecA.copy(center).applyMatrix4(worldMatrix);
+    const offset = sampleCount * 3;
+    sampledCenters[offset] = tempVecA.x;
+    sampledCenters[offset + 1] = tempVecA.y;
+    sampledCenters[offset + 2] = tempVecA.z;
+    sampleCount += 1;
+  });
+
+  return estimateSceneUpFromWorldCenters(sampledCenters, sampleCount);
+}
+
+function alignSplatSceneToWorldUp(mesh) {
+  const estimatedUp = estimateSceneUpFromMesh(mesh);
+  const dot = THREE.MathUtils.clamp(estimatedUp.dot(WORLD_UP), -1, 1);
+  if (dot > 0.9999) {
+    return;
+  }
+
+  tempQuat.setFromUnitVectors(estimatedUp, WORLD_UP);
+  mesh.quaternion.premultiply(tempQuat);
+  mesh.updateWorldMatrix(true, false);
+}
+
+function getAdaptiveShotHelperScale(
+  worldPoint,
+  {
+    screenPixels = 14,
+    minFactor = 1,
+    maxFactor = 1
+  } = {}
+) {
+  const scaleFromScreen = getWorldUnitsPerPixel(worldPoint) * screenPixels;
+  const minScale = shotState.helperMinScale * minFactor;
+  const maxScale = shotState.helperMaxScale * maxFactor;
+  const baseScale = Math.max(scaleFromScreen, shotState.helperBaseScale * minFactor);
+  return THREE.MathUtils.clamp(baseScale, minScale, maxScale);
 }
 
 function updateBrushCursor(clientX = null, clientY = null) {
@@ -194,6 +737,350 @@ function updateBrushCursor(clientX = null, clientY = null) {
   brushCursorEl.style.left = `${clientX}px`;
   brushCursorEl.style.top = `${clientY}px`;
   brushCursorEl.style.display = "block";
+}
+
+function getShotPointPosition(shotPoint, target = new THREE.Vector3()) {
+  target.set(
+    shotPivot.x + Math.cos(shotPoint.azimuth) * shotPoint.radius,
+    shotPivot.y + shotPoint.height,
+    shotPivot.z + Math.sin(shotPoint.azimuth) * shotPoint.radius
+  );
+  return target;
+}
+
+function getShotPointQuaternion(position, target = new THREE.Quaternion()) {
+  const lookAtMatrix = new THREE.Matrix4().lookAt(position, shotPivot, camera.up);
+  target.setFromRotationMatrix(lookAtMatrix);
+  return target;
+}
+
+function stopPlayback(statusText = "") {
+  playing = false;
+  playT = 0;
+  playLastTime = 0;
+  setPlaybackPreviewAspectLocked(false);
+  playStatusEl.textContent = statusText;
+}
+
+function updateShotLabelVisual(visual, labelText, selected) {
+  const nextKey = `${labelText}-${selected ? "selected" : "normal"}`;
+  if (visual.labelText === nextKey) {
+    return;
+  }
+
+  const position = visual.label.position.clone();
+  const scale = visual.label.scale.clone();
+  visual.group.remove(visual.label);
+  disposeSprite(visual.label);
+
+  visual.label = createLabelSprite(labelText, selected
+    ? {
+        background: "rgba(61, 39, 7, 0.94)",
+        border: "#ffc857",
+        color: "#fff6da",
+        width: 270,
+        height: 132,
+        fontSize: 58
+      }
+    : {
+        background: "rgba(19, 38, 56, 0.9)",
+        border: "#71cdff",
+        color: "#eaf9ff",
+        width: 240,
+        height: 124,
+        fontSize: 52
+      });
+
+  visual.label.position.copy(position);
+  visual.label.scale.copy(scale);
+  visual.group.add(visual.label);
+  visual.labelText = nextKey;
+}
+
+function ensureShotPointVisuals() {
+  while (shotState.visuals.length < shotState.points.length) {
+    shotState.visuals.push(createShotPointVisual(shotState.visuals.length));
+  }
+  while (shotState.visuals.length > shotState.points.length) {
+    const visual = shotState.visuals.pop();
+    disposeShotPointVisual(visual);
+  }
+}
+
+function areShotHelpersVisible() {
+  return shotState.helperVisible && shotState.helperActivated;
+}
+
+function revealShotHelpers() {
+  if (shotState.helperActivated) {
+    return;
+  }
+  shotState.helperActivated = true;
+  updateShotVisuals();
+  if (pathLine) {
+    pathLine.visible = areShotHelpersVisible() && keyframes.length >= 2;
+  }
+}
+
+function updateShotVisuals() {
+  ensureShotPointVisuals();
+  const helperVisible = areShotHelpersVisible();
+
+  shotPivotMarker.group.visible = helperVisible && hasShotPivot;
+  if (hasShotPivot) {
+    const pivotScale = getAdaptiveShotHelperScale(shotPivot, {
+      screenPixels: 18,
+      minFactor: 1.1,
+      maxFactor: 1.22
+    });
+    shotPivotMarker.group.position.copy(shotPivot);
+    shotPivotMarker.group.quaternion.copy(camera.quaternion);
+    shotPivotMarker.group.scale.setScalar(pivotScale);
+  }
+
+  for (let index = 0; index < shotState.visuals.length; index += 1) {
+    const shotPoint = shotState.points[index];
+    const visual = shotState.visuals[index];
+    const selected = index === shotState.selectedIndex;
+    const position = getShotPointPosition(shotPoint, tempVecA);
+    const direction = tempVecB.copy(shotPivot).sub(position).normalize();
+    const toPivot = tempVecC.copy(shotPivot).sub(position);
+    const color = selected ? SHOT_POINT_SELECTED_COLOR : SHOT_POINT_COLOR;
+    const helperScale = getAdaptiveShotHelperScale(position, {
+      screenPixels: selected ? 15 : 13,
+      minFactor: selected ? 1.04 : 1,
+      maxFactor: selected ? 1.12 : 1
+    });
+    const bodyScale = selected ? 1.18 : 1;
+    const labelYOffset = selected ? 0.76 : 0.62;
+
+    visual.group.visible = helperVisible;
+    visual.group.position.copy(position);
+    visual.group.scale.setScalar(helperScale);
+
+    visual.body.material.color.setHex(color);
+    visual.body.scale.setScalar(bodyScale);
+    visual.pickMesh.userData.shotPointIndex = index;
+
+    visual.linkPositions[0] = 0;
+    visual.linkPositions[1] = 0;
+    visual.linkPositions[2] = 0;
+    visual.linkPositions[3] = toPivot.x / visual.group.scale.x;
+    visual.linkPositions[4] = toPivot.y / visual.group.scale.y;
+    visual.linkPositions[5] = toPivot.z / visual.group.scale.z;
+    visual.linkLine.geometry.attributes.position.needsUpdate = true;
+    visual.linkLine.material.color.setHex(color);
+    visual.linkLine.material.opacity = selected ? 0.5 : 0.28;
+
+    visual.arrow.setDirection(direction);
+    visual.arrow.setLength(selected ? 1.65 : 1.4, selected ? 0.92 : 0.78, selected ? 0.62 : 0.52);
+    tempColor.setHex(color);
+    visual.arrow.setColor(tempColor);
+
+    visual.label.position.set(0, labelYOffset, 0);
+    visual.label.scale.set(selected ? 1.32 : 1.18, selected ? 0.64 : 0.58, 1);
+    updateShotLabelVisual(visual, String(index + 1), selected);
+  }
+}
+
+function setShotHelperVisibility(visible) {
+  shotState.helperVisible = visible;
+  updateShotVisuals();
+  if (pathLine) {
+    pathLine.visible = areShotHelpersVisible() && keyframes.length >= 2;
+  }
+}
+
+function previewShotPoint(index) {
+  const frame = keyframes[index];
+  if (!frame || !hasShotPivot) {
+    return;
+  }
+  camera.position.copy(frame.position);
+  camera.quaternion.copy(frame.quaternion);
+  orbitTarget.copy(shotPivot);
+  hasOrbitTarget = true;
+}
+
+function selectShotPoint(index, { preview = true } = {}) {
+  if (index < 0 || index >= shotState.points.length) {
+    shotState.selectedIndex = -1;
+    updateShotVisuals();
+    updateShotUi();
+    return;
+  }
+
+  shotState.selectedIndex = index;
+  updateShotVisuals();
+  if (preview) {
+    previewShotPoint(index);
+  }
+  updateShotUi();
+}
+
+function syncShotPlanner({ previewSelection = false } = {}) {
+  if (playing) {
+    stopPlayback("⏸ 路径已更新");
+  }
+
+  keyframes.length = 0;
+  for (const shotPoint of shotState.points) {
+    const position = getShotPointPosition(shotPoint, new THREE.Vector3());
+    const quaternion = getShotPointQuaternion(position, new THREE.Quaternion());
+    keyframes.push({ position, quaternion });
+  }
+
+  updatePathLine();
+  updateShotVisuals();
+
+  if (previewSelection && shotState.selectedIndex !== -1) {
+    previewShotPoint(shotState.selectedIndex);
+  }
+  if (!shotState.points.length) {
+    playStatusEl.textContent = "";
+  }
+  updateShotUi();
+}
+
+function setShotPivot(point, { syncOrbit = true, previewSelection = true, revealHelpers = false } = {}) {
+  shotPivot.copy(point);
+  hasShotPivot = true;
+  if (syncOrbit) {
+    orbitTarget.copy(point);
+    hasOrbitTarget = true;
+  }
+  if (revealHelpers) {
+    revealShotHelpers();
+  }
+  syncShotPlanner({ previewSelection });
+}
+
+function initializeShotPlanner(focus) {
+  shotState.sceneRadius = Math.max(focus.size.length() * 0.5, 0.5);
+  shotState.helperMinScale = Math.max(shotState.sceneRadius * 0.012, 0.014);
+  shotState.helperBaseScale = Math.max(shotState.sceneRadius * 0.02, shotState.helperMinScale * 1.2);
+  shotState.helperMaxScale = Math.max(shotState.sceneRadius * 0.042, shotState.helperBaseScale * 1.75);
+  shotState.points.length = 0;
+  shotState.selectedIndex = -1;
+  setShotPivot(focus.center, { syncOrbit: true, previewSelection: false });
+}
+
+function setPlannerMode(enabled) {
+  if (!editState.ready) {
+    return;
+  }
+  shotState.plannerMode = enabled;
+  if (enabled) {
+    revealShotHelpers();
+  }
+  endPointerAction();
+  if (enabled && editState.editMode) {
+    editState.editMode = false;
+    updateBrushCursor();
+    updateEditUi();
+  }
+  if (enabled && shotState.selectedIndex !== -1) {
+    previewShotPoint(shotState.selectedIndex);
+  }
+  updateShotUi();
+}
+
+function createShotPointFromCurrentCamera() {
+  const offsetX = camera.position.x - shotPivot.x;
+  const offsetY = camera.position.y - shotPivot.y;
+  const offsetZ = camera.position.z - shotPivot.z;
+  const radius = Math.max(SHOT_MIN_RADIUS, Math.hypot(offsetX, offsetZ));
+
+  return {
+    radius,
+    azimuth: normalizeAngle(Math.atan2(offsetZ, offsetX)),
+    height: offsetY
+  };
+}
+
+function insertShotPoint() {
+  if (!hasShotPivot) {
+    return;
+  }
+
+  revealShotHelpers();
+
+  const points = shotState.points;
+  let insertIndex = points.length;
+  let nextPoint = createShotPointFromCurrentCamera();
+
+  if (points.length > 0 && shotState.selectedIndex !== -1) {
+    insertIndex = shotState.selectedIndex + 1;
+  }
+
+  points.splice(insertIndex, 0, nextPoint);
+  syncShotPlanner();
+  selectShotPoint(insertIndex);
+}
+
+function deleteSelectedShotPoint() {
+  if (shotState.selectedIndex < 0 || shotState.selectedIndex >= shotState.points.length) {
+    return;
+  }
+
+  const deletedIndex = shotState.selectedIndex;
+  shotState.points.splice(deletedIndex, 1);
+  if (!shotState.points.length) {
+    shotState.selectedIndex = -1;
+    syncShotPlanner();
+    return;
+  }
+
+  shotState.selectedIndex = Math.min(deletedIndex, shotState.points.length - 1);
+  syncShotPlanner({ previewSelection: true });
+}
+
+function clearShotPoints() {
+  shotState.points.length = 0;
+  shotState.selectedIndex = -1;
+  syncShotPlanner();
+}
+
+function updateShotUi() {
+  const hasModel = editState.ready;
+  const hasSelection = shotState.selectedIndex >= 0 && shotState.selectedIndex < shotState.points.length;
+  const plannerLabel = shotState.plannerMode ? "镜头规划" : editState.editMode ? "删除编辑" : "浏览";
+  const canInsert = hasModel && hasShotPivot;
+
+  shotPanelEl.classList.toggle("active", shotState.plannerMode);
+  shotModeBadgeEl.textContent = `当前模式: ${plannerLabel}`;
+  togglePlannerBtn.textContent = shotState.plannerMode ? "退出规划" : "进入规划";
+  togglePlannerBtn.classList.toggle("active", shotState.plannerMode);
+  togglePlannerBtn.disabled = !hasModel || exporting;
+  insertShotBtn.disabled = !canInsert || exporting;
+  deleteShotBtn.disabled = !hasSelection || exporting;
+  clearShotsBtn.disabled = shotState.points.length === 0 || exporting;
+
+  kfCountEl.textContent = `镜头点: ${shotState.points.length}`;
+  shotPointCountEl.textContent = String(shotState.points.length);
+  selectedShotLabelEl.textContent = hasSelection ? `#${shotState.selectedIndex + 1}` : "未选中";
+  shotPivotLabelEl.textContent = hasShotPivot
+    ? shotPivot.toArray().map((value) => value.toFixed(2)).join(", ")
+    : "未设置";
+  deleteModeLabelEl.textContent = shotState.plannerMode ? "删除镜头点" : editState.editMode ? "删除 splats" : "未激活";
+
+  if (!hasModel) {
+    shotHintEl.textContent = "等待模型加载完成。";
+  } else if (!hasShotPivot) {
+    shotHintEl.textContent = "双击模型设置固定镜头中心点。";
+  } else if (shotState.plannerMode) {
+    if (shotState.points.length === 0) {
+      shotHintEl.textContent = "当前无镜头点，按 + 从当前机位插点。少于 2 个点时无法播放或导出。";
+    } else if (shotState.points.length >= 2) {
+      shotHintEl.textContent = "点镜头点预览，点空白取消。+ 插点，Del 删点，P 预览。";
+    } else {
+      shotHintEl.textContent = "点镜头点预览，+ 插点。少于 2 个点时无法播放或导出。";
+    }
+  } else {
+    shotHintEl.textContent = "进入规划后可选中镜头点预览；双击可重设中心。";
+  }
+
+  exportBtn.disabled = exporting || shotState.points.length < 2;
 }
 
 function updateSelectionRect(clientX, clientY) {
@@ -228,8 +1115,6 @@ function focusCameraOnBounds(center, size) {
 
   orbitTarget.copy(center);
   hasOrbitTarget = true;
-  marker.position.copy(center);
-  marker.visible = !exporting;
 }
 
 function focusVisibleSplats() {
@@ -277,7 +1162,6 @@ function focusVisibleSplats() {
   const size = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
   focusCameraOnBounds(center, size);
 
-  console.log("Reset 对焦中心:", center.toArray(), "可见 splat 数量:", visibleCount);
   return true;
 }
 
@@ -422,10 +1306,11 @@ function updateEditUi() {
   const hasVisibleSplats = hasModel && editState.hiddenCount < editState.numSplats;
   const usingRadius = editState.activeTool === "brush";
   radiusLabelEl.textContent = "画笔半径 (px)";
-  radiusInput.disabled = !hasModel || !usingRadius;
-  resetViewBtn.disabled = !hasVisibleSplats;
-  saveSceneBtn.disabled = !hasVisibleSplats || editState.savingScene;
-  saveSceneBtn.textContent = editState.savingScene ? "保存中..." : "保存场景 (.ply)";
+  toggleEditBtn.disabled = !hasModel || exporting;
+  radiusInput.disabled = !hasModel || !usingRadius || exporting;
+  resetViewBtn.disabled = !hasVisibleSplats || exporting;
+  saveSceneBtn.disabled = !hasVisibleSplats || editState.savingScene || exporting;
+  saveSceneBtn.textContent = editState.savingScene ? "保存中..." : "保存 .ply (Ctrl+S)";
 
   radiusInput.min = "1";
   radiusInput.step = "1";
@@ -434,25 +1319,26 @@ function updateEditUi() {
   for (const button of toolButtons) {
     const isActive = button.dataset.tool === editState.activeTool;
     button.classList.toggle("active", isActive);
-    button.disabled = !hasModel;
+    button.disabled = !hasModel || exporting;
   }
 
-  clearSelectionBtn.disabled = !hasModel || editState.selectedCount === 0;
-  undoBtn.disabled = !hasModel || editState.undoStack.length === 0;
-  redoBtn.disabled = !hasModel || editState.redoStack.length === 0;
-  deleteSelectionBtn.disabled = !hasModel || editState.selectedCount === 0;
+  clearSelectionBtn.disabled = !hasModel || editState.selectedCount === 0 || exporting;
+  undoBtn.disabled = !hasModel || editState.undoStack.length === 0 || exporting;
+  redoBtn.disabled = !hasModel || editState.redoStack.length === 0 || exporting;
+  deleteSelectionBtn.disabled = !hasModel || editState.selectedCount === 0 || exporting;
 
   if (!hasModel) {
     editHintEl.textContent = "等待模型加载完成。";
+  } else if (shotState.plannerMode) {
+    editHintEl.textContent = "镜头规划开启中，按 E 可切回删除编辑。";
   } else if (!editState.editMode) {
-    editHintEl.textContent = "按 E 进入编辑模式。进入后左键用于选择，右键/滚轮用于导航。";
+    editHintEl.textContent = "按 E 进入编辑。左键选择，右键/滚轮导航。";
   } else if (editState.activeTool === "picker") {
-    editHintEl.textContent = "左键单击选点，左键拖拽框选。Shift 加选，Ctrl/Cmd 减选。";
+    editHintEl.textContent = "单击选点，拖拽框选。Shift 加选，Ctrl/Cmd 减选。";
   } else {
-    editHintEl.textContent = "左键拖动刷选，按 [ / ] 调整半径。Shift 加选，Ctrl/Cmd 减选。";
+    editHintEl.textContent = "左键刷选，[ / ] 调半径。Shift 加选，Ctrl/Cmd 减选。";
   }
 
-  updateInfoPanel();
 }
 
 function setActiveTool(tool) {
@@ -469,10 +1355,14 @@ function endPointerAction() {
 }
 
 function setEditMode(enabled) {
+  if (enabled && shotState.plannerMode) {
+    shotState.plannerMode = false;
+  }
   editState.editMode = enabled;
   endPointerAction();
   updateBrushCursor();
   updateEditUi();
+  updateShotUi();
 }
 
 function autoFocusMesh(mesh) {
@@ -482,9 +1372,7 @@ function autoFocusMesh(mesh) {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   focusCameraOnBounds(center, size);
-
-  console.log("模型包围盒:", box.min.toArray(), box.max.toArray());
-  console.log("自动对焦中心:", center.toArray(), "相机位置:", camera.position.toArray());
+  initializeShotPlanner({ box, center, size });
 
   return { box, center, size };
 }
@@ -551,7 +1439,9 @@ function initializeEditing(mesh, focus) {
   editState.projectionY = projectionY;
   editState.projectionDepth = projectionDepth;
   editState.projectionVisible = projectionVisible;
+
   updateEditUi();
+  updateShotUi();
 }
 
 function applyVisualStateForIndex(index) {
@@ -885,13 +1775,61 @@ function applyBrushSelection(clientX, clientY) {
   commitSelectionChange(changedIndices);
 }
 
-function setOrbitTarget(point) {
-  orbitTarget.copy(point);
-  hasOrbitTarget = true;
-  marker.position.copy(point);
-  if (!exporting) {
-    marker.visible = true;
+function pickShotPoint(event) {
+  if (!shotState.visuals.length) {
+    return null;
   }
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  tempVec2A.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(tempVec2A, camera);
+  const pickMeshes = shotState.visuals.map((visual) => visual.pickMesh);
+  const intersects = raycaster.intersectObjects(pickMeshes, false);
+  if (intersects[0]) {
+    return intersects[0];
+  }
+
+  const pickRadiusSq = SHOT_PICK_SCREEN_RADIUS_PX * SHOT_PICK_SCREEN_RADIUS_PX;
+  let bestIndex = -1;
+  let bestDistanceSq = pickRadiusSq;
+  let bestDepth = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < shotState.points.length; index += 1) {
+    const position = getShotPointPosition(shotState.points[index], tempVecA);
+    tempVecB.copy(position).project(camera);
+    if (
+      !Number.isFinite(tempVecB.x) ||
+      !Number.isFinite(tempVecB.y) ||
+      !Number.isFinite(tempVecB.z) ||
+      tempVecB.z < -1 ||
+      tempVecB.z > 1
+    ) {
+      continue;
+    }
+
+    const screenPoint = projectWorldToScreen(position, tempVec2B);
+    if (!screenPoint) {
+      continue;
+    }
+
+    const dx = screenPoint.x - event.clientX;
+    const dy = screenPoint.y - event.clientY;
+    const distanceSq = dx * dx + dy * dy;
+    if (distanceSq > pickRadiusSq) {
+      continue;
+    }
+
+    if (distanceSq < bestDistanceSq || (distanceSq === bestDistanceSq && tempVecB.z < bestDepth)) {
+      bestIndex = index;
+      bestDistanceSq = distanceSq;
+      bestDepth = tempVecB.z;
+    }
+  }
+
+  return bestIndex === -1 ? null : { object: { userData: { shotPointIndex: bestIndex } } };
 }
 
 function pickScenePoint(event) {
@@ -988,6 +1926,69 @@ function updateRotate(event) {
   camera.quaternion.setFromEuler(eulers);
 }
 
+function resetKeyboardLookState() {
+  keyboardLookState.left = false;
+  keyboardLookState.right = false;
+  keyboardLookState.up = false;
+  keyboardLookState.down = false;
+}
+
+function setKeyboardLookKeyState(key, pressed) {
+  if (key === "ArrowLeft") {
+    keyboardLookState.left = pressed;
+    return true;
+  }
+  if (key === "ArrowRight") {
+    keyboardLookState.right = pressed;
+    return true;
+  }
+  if (key === "ArrowUp") {
+    keyboardLookState.up = pressed;
+    return true;
+  }
+  if (key === "ArrowDown") {
+    keyboardLookState.down = pressed;
+    return true;
+  }
+  return false;
+}
+
+function updateKeyboardLook(deltaTime) {
+  const yawInput = (keyboardLookState.left ? 1 : 0) - (keyboardLookState.right ? 1 : 0);
+  const pitchInput = (keyboardLookState.up ? 1 : 0) - (keyboardLookState.down ? 1 : 0);
+  if (yawInput === 0 && pitchInput === 0) {
+    return;
+  }
+
+  const sceneUp = WORLD_UP;
+  const lookAmount = KEYBOARD_LOOK_SPEED * deltaTime;
+  camera.getWorldDirection(tempVecA);
+  tempVecA.normalize();
+
+  if (yawInput !== 0) {
+    tempVecA.applyAxisAngle(sceneUp, yawInput * lookAmount).normalize();
+  }
+
+  if (pitchInput !== 0) {
+    tempVecB.crossVectors(tempVecA, sceneUp);
+    const rightLengthSq = tempVecB.lengthSq();
+    if (rightLengthSq > 1e-10) {
+      tempVecB.multiplyScalar(1 / Math.sqrt(rightLengthSq));
+      const currentElevation = Math.asin(THREE.MathUtils.clamp(tempVecA.dot(sceneUp), -1, 1));
+      const targetElevation = THREE.MathUtils.clamp(
+        currentElevation + pitchInput * lookAmount,
+        -Math.PI / 2 + 0.001,
+        Math.PI / 2 - 0.001
+      );
+      tempVecA.applyAxisAngle(tempVecB, targetElevation - currentElevation).normalize();
+    }
+  }
+
+  tempVecC.copy(camera.position).add(tempVecA);
+  tempMatrix.lookAt(camera.position, tempVecC, sceneUp);
+  camera.quaternion.setFromRotationMatrix(tempMatrix);
+}
+
 function updatePan(event) {
   const deltaX = event.clientX - pointerState.lastX;
   const deltaY = event.clientY - pointerState.lastY;
@@ -1004,7 +2005,6 @@ function updatePan(event) {
   camera.position.add(tempVecC);
   if (hasOrbitTarget) {
     orbitTarget.add(tempVecC);
-    marker.position.copy(orbitTarget);
   }
 }
 
@@ -1048,6 +2048,18 @@ function handleCanvasMouseDown(event) {
     beginPan(event);
     event.preventDefault();
     return;
+  }
+
+  if (shotState.plannerMode && event.button === 0) {
+    const hit = pickShotPoint(event);
+    if (hit) {
+      const shotPointIndex = hit.object.userData.shotPointIndex;
+      selectShotPoint(shotPointIndex);
+      event.preventDefault();
+      return;
+    }
+
+    selectShotPoint(-1, { preview: false });
   }
 
   if (!editState.editMode || !editState.ready) {
@@ -1163,8 +2175,7 @@ function handleCanvasDoubleClick(event) {
   if (!hit) {
     return;
   }
-  setOrbitTarget(hit.point);
-  console.log("环绕中心已设置:", hit.point);
+  setShotPivot(hit.point, { revealHelpers: true });
 }
 
 function handleCanvasWheel(event) {
@@ -1175,12 +2186,17 @@ function handleCanvasWheel(event) {
 function updateFrameInfo() {
   const fps = parseInt(fpsInput.value, 10) || 30;
   const duration = parseFloat(durationInput.value) || 5;
-  exportFrameInfo.textContent = `总帧数: ${Math.round(fps * duration)}`;
+  const resolution = getSelectedOutputResolution();
+  exportFrameInfo.textContent = `总帧数: ${Math.round(fps * duration)} | 画幅: ${resolution.width}×${resolution.height}`;
+
+  if (playbackPreviewLockedAspect && !exporting) {
+    setPlaybackPreviewAspectLocked(true);
+  }
 }
 
 function updatePathLine() {
   if (pathLine) {
-    scene.remove(pathLine);
+    shotHelperRoot.remove(pathLine);
     pathLine.geometry.dispose();
     pathLine.material.dispose();
     pathLine = null;
@@ -1198,64 +2214,57 @@ function updatePathLine() {
   );
   const points = positionCurve.getPoints(keyframes.length * 50);
   const geo = new THREE.BufferGeometry().setFromPoints(points);
-  const mat = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 2 });
+  const mat = new THREE.LineBasicMaterial({
+    color: SHOT_PATH_COLOR,
+    transparent: true,
+    opacity: 0.95,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false
+  });
   pathLine = new THREE.Line(geo, mat);
-  scene.add(pathLine);
+  pathLine.renderOrder = 1030;
+  pathLine.visible = areShotHelpersVisible();
+  shotHelperRoot.add(pathLine);
 }
 
-function addKeyframe() {
-  const kf = {
-    position: camera.position.clone(),
-    quaternion: camera.quaternion.clone()
-  };
-  keyframes.push(kf);
-  const geo = new THREE.SphereGeometry(0.02, 12, 12);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x4488ff });
-  const markerMesh = new THREE.Mesh(geo, mat);
-  markerMesh.position.copy(kf.position);
-  scene.add(markerMesh);
-  kfMarkers.push(markerMesh);
-
-  kfCountEl.textContent = `关键帧: ${keyframes.length}`;
-  console.log(`关键帧 #${keyframes.length} 已添加`, kf.position);
-  updatePathLine();
+function getShotPreviewDuration() {
+  return Math.max(0.5, parseFloat(durationInput.value) || 5);
 }
 
-function clearKeyframes() {
-  keyframes.length = 0;
-  for (const markerMesh of kfMarkers) {
-    scene.remove(markerMesh);
-    markerMesh.geometry.dispose();
-    markerMesh.material.dispose();
+function applyPlaybackFrame(t) {
+  if (!positionCurve || keyframes.length < 2) {
+    return;
   }
-  kfMarkers.length = 0;
-  if (pathLine) {
-    scene.remove(pathLine);
-    pathLine.geometry.dispose();
-    pathLine.material.dispose();
-    pathLine = null;
+
+  const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+  camera.position.copy(positionCurve.getPointAt(clampedT));
+  getShotPointQuaternion(camera.position, camera.quaternion);
+
+  if (hasShotPivot) {
+    orbitTarget.copy(shotPivot);
+    hasOrbitTarget = true;
   }
-  positionCurve = null;
-  playing = false;
-  playT = 0;
-  kfCountEl.textContent = "关键帧: 0";
-  playStatusEl.textContent = "";
-  console.log("关键帧已清除");
 }
 
 function togglePlay() {
   if (keyframes.length < 2 || !positionCurve) {
-    playStatusEl.textContent = "至少需要 2 个关键帧";
+    playStatusEl.textContent = "至少需要 2 个镜头点";
     return;
   }
-  playing = !playing;
+
   if (playing) {
-    playT = 0;
-    playLastTime = performance.now();
-    playStatusEl.textContent = "▶ 播放中...";
-  } else {
-    playStatusEl.textContent = "⏸ 已停止";
+    stopPlayback("⏸ 已停止");
+    return;
   }
+
+  revealShotHelpers();
+  playing = true;
+  playT = 0;
+  playLastTime = performance.now();
+  setPlaybackPreviewAspectLocked(true);
+  applyPlaybackFrame(0);
+  playStatusEl.textContent = "▶ 播放中...";
 }
 
 function updatePlayback(time) {
@@ -1265,36 +2274,24 @@ function updatePlayback(time) {
 
   const dt = (time - playLastTime) / 1000;
   playLastTime = time;
-  playT += playSpeed * dt;
+  playT += dt / getShotPreviewDuration();
 
   if (playT >= 1) {
     playT = 1;
+    applyPlaybackFrame(playT);
     playing = false;
+    playLastTime = 0;
+    setPlaybackPreviewAspectLocked(false);
     playStatusEl.textContent = "✓ 播放完成";
+    return;
   }
 
-  camera.position.copy(positionCurve.getPointAt(playT));
-  const totalSegments = keyframes.length - 1;
-  const rawSegment = playT * totalSegments;
-  const segmentIndex = Math.min(Math.floor(rawSegment), totalSegments - 1);
-  const segmentT = rawSegment - segmentIndex;
-  camera.quaternion.slerpQuaternions(
-    keyframes[segmentIndex].quaternion,
-    keyframes[segmentIndex + 1].quaternion,
-    segmentT
-  );
-
+  applyPlaybackFrame(playT);
   playStatusEl.textContent = `▶ ${Math.round(playT * 100)}%`;
 }
 
 function hideHelperOverlaysForExport() {
-  if (pathLine) {
-    pathLine.visible = false;
-  }
-  for (const markerMesh of kfMarkers) {
-    markerMesh.visible = false;
-  }
-  marker.visible = false;
+  setShotHelperVisibility(false);
   selectionRectEl.style.display = "none";
   brushCursorEl.style.display = "none";
 
@@ -1305,15 +2302,7 @@ function hideHelperOverlaysForExport() {
 }
 
 function restoreHelperOverlaysAfterExport() {
-  if (pathLine) {
-    pathLine.visible = true;
-  }
-  for (const markerMesh of kfMarkers) {
-    markerMesh.visible = true;
-  }
-  if (hasOrbitTarget) {
-    marker.visible = true;
-  }
+  setShotHelperVisibility(true);
 
   if (editState.ready && !editState.selectionHighlightEnabled && editState.selectedCount > 0) {
     editState.selectionHighlightEnabled = true;
@@ -1328,7 +2317,7 @@ async function exportVideo() {
     return;
   }
   if (keyframes.length < 2 || !positionCurve) {
-    exportStatusEl.textContent = "请先添加至少 2 个关键帧";
+    exportStatusEl.textContent = "请先创建至少 2 个镜头点";
     return;
   }
   if (typeof VideoEncoder === "undefined") {
@@ -1340,6 +2329,8 @@ async function exportVideo() {
   exportBtn.disabled = true;
   exportProgress.style.display = "block";
   exportStatusEl.textContent = "加载编码器...";
+  updateEditUi();
+  updateShotUi();
 
   let mp4Muxer;
   try {
@@ -1347,20 +2338,16 @@ async function exportVideo() {
   } catch (error) {
     exportStatusEl.textContent = `加载 mp4-muxer 失败: ${error.message}`;
     exporting = false;
-    exportBtn.disabled = false;
+    updateEditUi();
+    updateShotUi();
     return;
   }
 
-  const resolutions = {
-    "1080": { width: 1920, height: 1080 },
-    "2160": { width: 2560, height: 1440 },
-    "4320": { width: 3840, height: 2160 }
-  };
-  const resolution = resolutions[resSelect.value];
+  const resolution = getSelectedOutputResolution();
   const fps = Math.max(1, parseInt(fpsInput.value, 10) || 30);
   const duration = Math.max(0.5, parseFloat(durationInput.value) || 5);
   const bitrate = Math.max(1, parseInt(bitrateInput.value, 10) || 10) * 1_000_000;
-  const totalFrames = Math.round(fps * duration);
+  const totalFrames = Math.max(1, Math.round(fps * duration));
 
   const pixels = resolution.width * resolution.height;
   const codecString = pixels > 5652480 ? "avc1.640034" : pixels > 2097152 ? "avc1.640032" : "avc1.640028";
@@ -1385,84 +2372,156 @@ async function exportVideo() {
     framerate: fps
   });
 
-  const originalWidth = window.innerWidth;
-  const originalHeight = window.innerHeight;
+  if (playing) {
+    stopPlayback("⏸ 已停止");
+  }
+
   const originalAspect = camera.aspect;
   const originalPosition = camera.position.clone();
   const originalQuaternion = camera.quaternion.clone();
+  const originalOrbitTarget = orbitTarget.clone();
+  const originalHasOrbitTarget = hasOrbitTarget;
+  let exportSpark = null;
 
-  renderer.setSize(resolution.width, resolution.height);
-  camera.aspect = resolution.width / resolution.height;
-  camera.updateProjectionMatrix();
+  try {
+    hideHelperOverlaysForExport();
+    exportStatusEl.textContent = `渲染中... 0/${totalFrames}`;
+    exportProgressBar.style.width = "0%";
 
-  hideHelperOverlaysForExport();
-  exportStatusEl.textContent = `渲染中... 0/${totalFrames}`;
+    camera.aspect = resolution.width / resolution.height;
+    camera.updateProjectionMatrix();
 
-  for (let frameIndex = 0; frameIndex <= totalFrames; frameIndex += 1) {
-    const t = frameIndex / totalFrames;
-    camera.position.copy(positionCurve.getPointAt(Math.min(t, 1)));
+    exportSpark = new SparkRenderer({
+      renderer,
+      target: {
+        width: resolution.width,
+        height: resolution.height
+      },
+      autoUpdate: false,
+      preUpdate: true,
+      premultipliedAlpha: spark.premultipliedAlpha,
+      transparent: spark.material.transparent,
+      depthTest: spark.material.depthTest,
+      depthWrite: spark.material.depthWrite,
+      maxStdDev: spark.maxStdDev,
+      minPixelRadius: spark.minPixelRadius,
+      maxPixelRadius: spark.maxPixelRadius,
+      accumExtSplats: spark.accumExtSplats,
+      covSplats: spark.covSplats,
+      minAlpha: spark.minAlpha,
+      enable2DGS: spark.enable2DGS,
+      preBlurAmount: spark.preBlurAmount,
+      blurAmount: spark.blurAmount,
+      focalDistance: spark.focalDistance,
+      apertureAngle: spark.apertureAngle,
+      falloff: spark.falloff,
+      clipXY: spark.clipXY,
+      focalAdjustment: spark.focalAdjustment,
+      encodeLinear: true,
+      sortRadial: spark.sortRadial,
+      minSortIntervalMs: 0,
+      enableLod: spark.enableLod,
+      enableDriveLod: spark.enableDriveLod,
+      enableLodFetching: spark.enableLodFetching,
+      lodSplatCount: spark.lodSplatCount,
+      lodSplatScale: spark.lodSplatScale,
+      lodRenderScale: spark.lodRenderScale,
+      lodInflate: spark.lodInflate,
+      pagedExtSplats: spark.pagedExtSplats,
+      maxPagedSplats: spark.maxPagedSplats,
+      numLodFetchers: spark.numLodFetchers,
+      behindFoveate: spark.behindFoveate,
+      coneFov0: spark.coneFov0,
+      coneFov: spark.coneFov,
+      coneFoveate: spark.coneFoveate,
+      lodRaycast: spark.lodRaycast,
+      lodRaycastIntervalMs: spark.lodRaycastIntervalMs
+    });
+    exportSpark.renderSize.set(resolution.width, resolution.height);
 
-    const totalSegments = keyframes.length - 1;
-    const rawSegment = t * totalSegments;
-    const segmentIndex = Math.min(Math.floor(rawSegment), totalSegments - 1);
-    const segmentT = rawSegment - segmentIndex;
-    camera.quaternion.slerpQuaternions(
-      keyframes[segmentIndex].quaternion,
-      keyframes[segmentIndex + 1].quaternion,
-      segmentT
-    );
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = resolution.width;
+    exportCanvas.height = resolution.height;
+    const exportContext = exportCanvas.getContext("2d", { alpha: false });
+    if (!exportContext) {
+      throw new Error("无法创建导出画布上下文");
+    }
+    const exportImageData = exportContext.createImageData(resolution.width, resolution.height);
 
-    renderer.render(scene, camera);
+    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex += 1) {
+      const t = totalFrames === 1 ? 0 : frameIndex / (totalFrames - 1);
+      applyPlaybackFrame(Math.min(t, 1));
+      camera.updateMatrixWorld(true);
 
-    const bitmap = await createImageBitmap(renderer.domElement);
-    const timestamp = Math.round(frameIndex * (1_000_000 / fps));
-    const frame = new VideoFrame(bitmap, { timestamp });
-    encoder.encode(frame, { keyFrame: frameIndex % (fps * 2) === 0 });
-    frame.close();
-    bitmap.close();
+      await exportSpark.update({ scene, camera });
+      const rgbaPixels = await exportSpark.renderReadTarget({ scene, camera });
+      writeFlippedRgbaToImageData(rgbaPixels, exportImageData, resolution.width, resolution.height);
+      exportContext.putImageData(exportImageData, 0, 0);
 
-    const percent = Math.round((frameIndex / totalFrames) * 100);
-    exportProgressBar.style.width = `${percent}%`;
-    exportStatusEl.textContent = `渲染中... ${frameIndex + 1}/${totalFrames + 1} (${percent}%)`;
+      const timestamp = Math.round(frameIndex * (1_000_000 / fps));
+      const frame = new VideoFrame(exportCanvas, { timestamp });
+      encoder.encode(frame, { keyFrame: frameIndex % (fps * 2) === 0 });
+      frame.close();
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      const percent = Math.round(((frameIndex + 1) / totalFrames) * 100);
+      exportProgressBar.style.width = `${percent}%`;
+      exportStatusEl.textContent = `渲染中... ${frameIndex + 1}/${totalFrames} (${percent}%)`;
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    exportStatusEl.textContent = "正在合成视频...";
+    await encoder.flush();
+    encoder.close();
+    muxer.finalize();
+
+    const mp4Blob = new Blob([muxer.target.buffer], { type: "video/mp4" });
+    const url = URL.createObjectURL(mp4Blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `render_${resSelect.value}p_${fps}fps.mp4`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    const sizeMb = (mp4Blob.size / 1048576).toFixed(1);
+    exportStatusEl.textContent = `✓ 导出完成！${sizeMb} MB, 共 ${totalFrames} 帧`;
+  } catch (error) {
+    try {
+      encoder.close();
+    } catch (_closeError) {
+      // Ignore encoder close failures when export aborts early.
+    }
+    exportStatusEl.textContent = `导出失败: ${error.message}`;
+  } finally {
+    if (exportSpark) {
+      exportSpark.dispose();
+    }
+    restoreHelperOverlaysAfterExport();
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    camera.position.copy(originalPosition);
+    camera.quaternion.copy(originalQuaternion);
+    orbitTarget.copy(originalOrbitTarget);
+    hasOrbitTarget = originalHasOrbitTarget;
+    exporting = false;
+    updateEditUi();
+    updateShotUi();
   }
-
-  exportStatusEl.textContent = "正在合成视频...";
-  await encoder.flush();
-  encoder.close();
-  muxer.finalize();
-
-  restoreHelperOverlaysAfterExport();
-  renderer.setSize(originalWidth, originalHeight);
-  camera.aspect = originalAspect;
-  camera.updateProjectionMatrix();
-  camera.position.copy(originalPosition);
-  camera.quaternion.copy(originalQuaternion);
-
-  const mp4Blob = new Blob([muxer.target.buffer], { type: "video/mp4" });
-  const url = URL.createObjectURL(mp4Blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `render_${resSelect.value}p_${fps}fps.mp4`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-
-  exporting = false;
-  exportBtn.disabled = false;
-  const sizeMb = (mp4Blob.size / 1048576).toFixed(1);
-  exportStatusEl.textContent = `✓ 导出完成！${sizeMb} MB, 共 ${totalFrames + 1} 帧`;
 }
 
 function handleGlobalKeyDown(event) {
-  if (event.key === "r" || event.key === "R") {
-    rKeyDown = true;
-  }
-
   if (isInputFocused()) {
     return;
+  }
+
+  if (exporting) {
+    return;
+  }
+
+  if (event.key === "r" || event.key === "R") {
+    rKeyDown = true;
   }
 
   const commandKey = event.ctrlKey || event.metaKey;
@@ -1495,6 +2554,21 @@ function handleGlobalKeyDown(event) {
       void saveEditedScene();
       event.preventDefault();
     }
+    return;
+  }
+
+  if (setKeyboardLookKeyState(event.key, true)) {
+    event.preventDefault();
+    return;
+  }
+
+  if (playing && event.key !== "p" && event.key !== "P") {
+    return;
+  }
+
+  if (shotState.plannerMode && (event.key === "Delete" || event.key === "Backspace")) {
+    deleteSelectedShotPoint();
+    event.preventDefault();
     return;
   }
 
@@ -1538,20 +2612,24 @@ function handleGlobalKeyDown(event) {
     }
   }
 
-  if (playing && event.key !== "p" && event.key !== "P") {
-    return;
-  }
-
   if (event.key === "+" || event.key === "=") {
-    addKeyframe();
+    insertShotPoint();
+    event.preventDefault();
   } else if (event.key === "p" || event.key === "P") {
     togglePlay();
+    event.preventDefault();
   } else if (event.key === "c" || event.key === "C") {
-    clearKeyframes();
+    clearShotPoints();
+    event.preventDefault();
   }
 }
 
 function handleGlobalKeyUp(event) {
+  if (setKeyboardLookKeyState(event.key, false)) {
+    event.preventDefault();
+    return;
+  }
+
   if (event.key === "r" || event.key === "R") {
     rKeyDown = false;
     if (pointerState.action === "orbit") {
@@ -1564,9 +2642,12 @@ function handleResize() {
   if (exporting) {
     return;
   }
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, innerWidth, innerHeight);
+  camera.aspect = playbackPreviewLockedAspect ? getSelectedOutputAspect() : innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  updateShotVisuals();
 }
 
 toggleEditBtn.addEventListener("click", () => {
@@ -1575,6 +2656,17 @@ toggleEditBtn.addEventListener("click", () => {
   }
   setEditMode(!editState.editMode);
 });
+
+togglePlannerBtn.addEventListener("click", () => {
+  if (!editState.ready) {
+    return;
+  }
+  setPlannerMode(!shotState.plannerMode);
+});
+
+insertShotBtn.addEventListener("click", insertShotPoint);
+deleteShotBtn.addEventListener("click", deleteSelectedShotPoint);
+clearShotsBtn.addEventListener("click", clearShotPoints);
 
 resetViewBtn.addEventListener("click", () => {
   focusVisibleSplats();
@@ -1629,22 +2721,15 @@ window.addEventListener("mouseup", handleWindowMouseUp);
 window.addEventListener("keydown", handleGlobalKeyDown);
 window.addEventListener("keyup", handleGlobalKeyUp);
 window.addEventListener("resize", handleResize);
-window.addEventListener("blur", endPointerAction);
+window.addEventListener("blur", () => {
+  resetKeyboardLookState();
+  endPointerAction();
+  updateBrushCursor();
+});
 
 updateFrameInfo();
 updateEditUi();
-
-window.__viewerDebug = {
-  scene,
-  camera,
-  renderer,
-  spark,
-  splats,
-  editState,
-  getVisibleSplatCount,
-  buildVisiblePlyBytes,
-  saveEditedScene
-};
+updateShotUi();
 
 renderer.setAnimationLoop((time) => {
   if (exporting) {
@@ -1656,8 +2741,10 @@ renderer.setAnimationLoop((time) => {
   } else {
     const deltaTime = (time - (controls.lastTime || time)) / 1000;
     controls.lastTime = time;
+    updateKeyboardLook(deltaTime);
     controls.fpsMovement.update(deltaTime, camera);
   }
 
-  renderer.render(scene, camera);
+  updateShotVisuals();
+  renderSceneFrame();
 });

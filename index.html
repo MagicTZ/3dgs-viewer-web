@@ -4,11 +4,44 @@
   <meta charset="utf-8">
   <title>3DGS Viewer</title>
   <style>
+    :root {
+      --side-panel-width: min(320px, calc(100vw - 20px));
+    }
     body { margin: 0; overflow: hidden; }
     #info {
-      position: fixed; top: 10px; left: 10px; color: white;
-      font-family: monospace; font-size: 14px; background: rgba(0,0,0,0.6);
-      padding: 10px; border-radius: 6px; pointer-events: none; z-index: 10;
+      position: fixed; right: 10px; bottom: 10px; color: white;
+      font-family: monospace; font-size: 12px; line-height: 1.45;
+      background: rgba(0,0,0,0.72); padding: 10px 12px; border-radius: 8px;
+      pointer-events: none; z-index: 10; box-sizing: border-box;
+      width: var(--side-panel-width);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .infoTitle {
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #d9e3ea;
+    }
+    .infoGrid {
+      display: grid;
+      grid-template-columns: 40px 1fr;
+      gap: 4px 8px;
+      color: #b8c4cc;
+    }
+    .infoLabel {
+      color: #e7edf2;
+    }
+    .infoFooter {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      color: #f2f6f8;
+    }
+    #playStatus {
+      color: #9fe0ff;
     }
     #crosshair {
       position: fixed; width: 12px; height: 12px; border: 2px solid #ff4444;
@@ -19,18 +52,19 @@
       position: fixed; top: 10px; right: 10px; color: white;
       font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.75);
       padding: 12px 16px; border-radius: 8px; z-index: 20;
-      min-width: 220px;
+      width: var(--side-panel-width); box-sizing: border-box;
     }
     #exportPanel h3 { margin: 0 0 8px 0; font-size: 15px; color: #44ff44; }
     #exportPanel label { display: block; margin: 6px 0 2px; }
     #exportPanel select, #exportPanel input {
       width: 100%; padding: 4px; margin-bottom: 4px;
       background: #333; color: white; border: 1px solid #666; border-radius: 4px;
+      box-sizing: border-box;
     }
     #exportPanel button {
       width: 100%; padding: 8px; margin-top: 8px; cursor: pointer;
       background: #44ff44; color: #000; border: none; border-radius: 4px;
-      font-weight: bold; font-size: 14px;
+      font-weight: bold; font-size: 14px; box-sizing: border-box;
     }
     #exportPanel button:hover { background: #66ff66; }
     #exportPanel button:disabled { background: #666; color: #999; cursor: not-allowed; }
@@ -41,11 +75,25 @@
       height: 100%; width: 0%; background: #44ff44; transition: width 0.1s;
     }
     #exportStatus { margin-top: 6px; font-size: 12px; color: #aaa; }
+    #leftColumn {
+      position: fixed;
+      left: 10px;
+      top: 10px;
+      width: var(--side-panel-width);
+      max-height: calc(100vh - 20px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 20;
+    }
     #editPanel {
-      position: fixed; left: 10px; bottom: 10px; color: white;
+      position: static; color: white;
       font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.8);
       padding: 12px 16px; border-radius: 8px; z-index: 20;
-      width: 320px;
+      width: 100%; box-sizing: border-box;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
     }
     #editPanel h3 { margin: 0 0 8px 0; font-size: 15px; color: #ffbb44; }
     #editPanel label { display: block; margin: 6px 0 2px; }
@@ -60,7 +108,7 @@
     #editPanel button {
       flex: 1; padding: 8px; cursor: pointer;
       background: #444; color: white; border: 1px solid #666; border-radius: 4px;
-      font-weight: bold; font-size: 12px;
+      font-weight: bold; font-size: 12px; line-height: 1.2; min-height: 36px;
     }
     #editPanel button:hover { background: #555; }
     #editPanel button:disabled { background: #333; color: #888; cursor: not-allowed; }
@@ -72,6 +120,43 @@
     }
     #editStats {
       margin-top: 8px; font-size: 12px; color: #ccc; line-height: 1.5;
+    }
+    #shotPanel {
+      position: static; color: white;
+      font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.82);
+      padding: 12px 16px; border-radius: 8px; z-index: 20;
+      width: 100%; box-sizing: border-box;
+      flex: 0 0 auto;
+      border: 1px solid rgba(113, 205, 255, 0.35);
+    }
+    #shotPanel.active {
+      box-shadow: 0 0 0 1px rgba(113, 205, 255, 0.55), 0 0 22px rgba(113, 205, 255, 0.2);
+    }
+    #shotPanel h3 { margin: 0 0 8px 0; font-size: 15px; color: #71cdff; }
+    #shotPanel button {
+      flex: 1; padding: 8px; cursor: pointer;
+      background: #244150; color: white; border: 1px solid #4d7183; border-radius: 4px;
+      font-weight: bold; font-size: 12px; line-height: 1.2; min-height: 36px;
+    }
+    #shotPanel button:hover { background: #2c5263; }
+    #shotPanel button:disabled { background: #233039; color: #6e8794; cursor: not-allowed; }
+    #shotPanel button.active {
+      background: #71cdff; color: #041017; border-color: #71cdff;
+    }
+    #shotModeBadge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: rgba(113, 205, 255, 0.16);
+      color: #9fe0ff;
+      border: 1px solid rgba(113, 205, 255, 0.32);
+    }
+    #shotHint {
+      margin-top: 8px; font-size: 12px; color: #b4c6d0; min-height: 48px; line-height: 1.45;
+    }
+    #shotStats {
+      margin-top: 8px; font-size: 12px; color: #d7e7ef; line-height: 1.55;
     }
     #selectionRect {
       position: fixed; border: 1px dashed #ffbb44; background: rgba(255,187,68,0.12);
@@ -94,16 +179,75 @@
 </head>
 <body>
   <div id="info">
-    鼠标左键拖拽: 旋转视角 | 右键拖拽: 平移 | 滚轮: 缩放<br>
-    WASD: 移动 | 双击模型: 设置环绕中心<br>
-    R + 左键拖拽: 围绕中心环绕（左=顺时针, 右=逆时针）<br>
-    <span style="color:#44ff44">+</span>: 添加关键帧 | <span style="color:#44ff44">P</span>: 播放/停止轨迹 | <span style="color:#44ff44">C</span>: 清除所有关键帧<br>
-    <span style="color:#ffbb44">E</span>: 编辑模式 | <span style="color:#ffbb44">1/2</span>: Picker/Brush | <span style="color:#ffbb44">Del</span>: 删除所选 | <span style="color:#ffbb44">Ctrl+Z/Y</span>: 撤销/重做<br>
-    <span id="kfCount">关键帧: 0</span> | <span id="playStatus"></span>
+    <div class="infoTitle">快捷操作</div>
+    <div class="infoGrid">
+      <div class="infoLabel">导航</div>
+      <div>左拖旋转 / 右拖平移 / 滚轮缩放 / 方向键转向 / R+左拖环绕</div>
+      <div class="infoLabel">镜头</div>
+      <div>双击设中心 / 规划模式点位预览 / + 插点 / Del 删点 / C 清空 / P 播放</div>
+      <div class="infoLabel">编辑</div>
+      <div>E 切换 / 1 Picker / 2 Brush / Esc 清选 / Del 删除 / Ctrl+Z/Y 撤销重做</div>
+    </div>
+    <div class="infoFooter">
+      <span id="kfCount">镜头点: 0</span>
+      <span id="playStatus"></span>
+    </div>
   </div>
   <div id="crosshair"></div>
   <div id="selectionRect"></div>
   <div id="brushCursor"></div>
+  <div id="leftColumn">
+    <div id="shotPanel">
+      <h3>镜头规划</h3>
+      <div id="shotModeBadge">当前模式: 浏览</div>
+      <div class="toolRow">
+        <button id="togglePlannerBtn">进入规划</button>
+        <button id="insertShotBtn">插点 (+)</button>
+      </div>
+      <div class="toolRow">
+        <button id="deleteShotBtn">删点 (Del)</button>
+        <button id="clearShotsBtn">清空 (C)</button>
+      </div>
+      <div id="shotHint">双击模型设置固定镜头中心。进入镜头规划后，按 + 从当前机位插点，点击镜头点即可预览。</div>
+      <div id="shotStats">
+        <div>当前镜头点: <span id="selectedShotLabel">未选中</span></div>
+        <div>镜头点数量: <span id="shotPointCount">0</span></div>
+        <div>固定中心点: <span id="shotPivotLabel">未设置</span></div>
+        <div>删除语义: <span id="deleteModeLabel">删除 splats</span></div>
+      </div>
+    </div>
+    <div id="editPanel">
+      <h3>编辑删除</h3>
+      <div class="toolRow">
+        <button id="toggleEditBtn">进入编辑 (E)</button>
+        <button id="resetViewBtn">重置视角</button>
+      </div>
+      <div class="toolRow">
+        <button class="toolBtn" data-tool="picker">Picker (1)</button>
+        <button class="toolBtn" data-tool="brush">Brush (2)</button>
+      </div>
+      <label id="radiusLabel" for="radiusInput">画笔半径 (px)</label>
+      <input id="radiusInput" type="number" value="24" min="1" step="1">
+      <div id="editHint">模型加载后可进入编辑模式。</div>
+      <div class="toolRow">
+        <button id="clearSelectionBtn">清空选择 (Esc)</button>
+      </div>
+      <div class="toolRow">
+        <button id="undoBtn">撤销 (Ctrl+Z)</button>
+        <button id="redoBtn">重做 (Ctrl+Y)</button>
+        <button id="deleteSelectionBtn">删除所选 (Del)</button>
+      </div>
+      <div class="toolRow">
+        <button id="saveSceneBtn">保存 .ply (Ctrl+S)</button>
+      </div>
+      <div id="saveStatus" style="font-size:12px;color:#aaa;"></div>
+      <div id="editStats">
+        <div>当前工具: <span id="activeToolLabel">Picker</span></div>
+        <div>已选择: <span id="selectionCount">0</span></div>
+        <div>已删除: <span id="deletedCount">0</span></div>
+      </div>
+    </div>
+  </div>
   <div id="exportPanel">
     <h3>导出视频</h3>
     <label>分辨率</label>
@@ -123,37 +267,6 @@
     <div id="exportProgress" style="display:none"><div id="exportProgressBar"></div></div>
     <div id="exportStatus"></div>
   </div>
-  <div id="editPanel">
-    <h3>编辑删除</h3>
-    <div class="toolRow">
-      <button id="toggleEditBtn">进入编辑 (E)</button>
-      <button id="resetViewBtn">Reset 视角</button>
-    </div>
-    <div class="toolRow">
-      <button class="toolBtn" data-tool="picker">Picker (1)</button>
-      <button class="toolBtn" data-tool="brush">Brush (2)</button>
-    </div>
-    <label id="radiusLabel" for="radiusInput">画笔半径 (px)</label>
-    <input id="radiusInput" type="number" value="24" min="1" step="1">
-    <div id="editHint">模型加载后可进入编辑模式。</div>
-    <div class="toolRow">
-      <button id="clearSelectionBtn">清空选择 (Esc)</button>
-    </div>
-    <div class="toolRow">
-      <button id="undoBtn">撤销</button>
-      <button id="redoBtn">重做</button>
-      <button id="deleteSelectionBtn">删除所选 (Del)</button>
-    </div>
-    <div class="toolRow">
-      <button id="saveSceneBtn">保存场景 (.ply)</button>
-    </div>
-    <div id="saveStatus" style="font-size:12px;color:#aaa;"></div>
-    <div id="editStats">
-      <div>当前工具: <span id="activeToolLabel">Picker</span></div>
-      <div>已选择: <span id="selectionCount">0</span></div>
-      <div>已删除: <span id="deletedCount">0</span></div>
-    </div>
-  </div>
-  <script type="module" src="./viewer.js?v=20260421-remove-auto-orbit"></script>
+  <script type="module" src="./viewer.js?v=20260421-release-cleanup"></script>
 </body>
 </html>
