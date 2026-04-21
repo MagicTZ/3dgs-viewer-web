@@ -122,6 +122,7 @@ const shotState = {
   plannerMode: false,
   points: [],
   selectedIndex: -1,
+  hoverIndex: -1,
   sceneRadius: 1,
   helperBaseScale: 0.05,
   helperMinScale: 0.02,
@@ -337,6 +338,22 @@ function createShotPivotMarker() {
   return { group, label };
 }
 
+function createShotFrustumGeometry() {
+  const positions = new Float32Array([
+    0, 0, 0, -1, -1, -1,
+    0, 0, 0, 1, -1, -1,
+    0, 0, 0, 1, 1, -1,
+    0, 0, 0, -1, 1, -1,
+    -1, -1, -1, 1, -1, -1,
+    1, -1, -1, 1, 1, -1,
+    1, 1, -1, -1, 1, -1,
+    -1, 1, -1, -1, -1, -1
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  return geometry;
+}
+
 function createShotPointVisual(index) {
   const group = new THREE.Group();
   const body = new THREE.Mesh(
@@ -367,29 +384,12 @@ function createShotPointVisual(index) {
   label.position.set(0, 0.62, 0);
   label.scale.set(1.2, 0.58, 1);
 
-  const linkPositions = new Float32Array(6);
-  const linkGeometry = new THREE.BufferGeometry();
-  linkGeometry.setAttribute("position", new THREE.BufferAttribute(linkPositions, 3));
-  const linkLine = new THREE.Line(linkGeometry, createLineMaterial(SHOT_POINT_COLOR));
-  linkLine.renderOrder = 1050;
-  linkLine.material.opacity = 0.32;
+  const frustum = new THREE.LineSegments(createShotFrustumGeometry(), createLineMaterial(SHOT_POINT_COLOR));
+  frustum.renderOrder = 1085;
+  frustum.material.opacity = 0.58;
+  frustum.visible = false;
 
-  const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 1.1, SHOT_POINT_COLOR, 0.34, 0.2);
-  arrow.line.material.depthTest = false;
-  arrow.line.material.depthWrite = false;
-  arrow.line.material.toneMapped = false;
-  arrow.line.material.transparent = true;
-  arrow.line.material.opacity = 0;
-  arrow.line.renderOrder = 1100;
-  arrow.line.visible = false;
-  arrow.cone.material.depthTest = false;
-  arrow.cone.material.depthWrite = false;
-  arrow.cone.material.toneMapped = false;
-  arrow.cone.material.transparent = true;
-  arrow.cone.material.opacity = 0.98;
-  arrow.cone.renderOrder = 1100;
-
-  group.add(linkLine, arrow, body, pickMesh, label);
+  group.add(frustum, body, pickMesh, label);
   group.visible = false;
   shotHelperRoot.add(group);
 
@@ -398,9 +398,7 @@ function createShotPointVisual(index) {
     body,
     pickMesh,
     label,
-    linkLine,
-    linkPositions,
-    arrow,
+    frustum,
     labelText: "",
     selected: false
   };
@@ -412,12 +410,8 @@ function disposeShotPointVisual(visual) {
   visual.body.material.dispose();
   visual.pickMesh.geometry.dispose();
   visual.pickMesh.material.dispose();
-  visual.linkLine.geometry.dispose();
-  visual.linkLine.material.dispose();
-  visual.arrow.line.geometry.dispose();
-  visual.arrow.line.material.dispose();
-  visual.arrow.cone.geometry.dispose();
-  visual.arrow.cone.material.dispose();
+  visual.frustum.geometry.dispose();
+  visual.frustum.material.dispose();
   disposeSprite(visual.label);
 }
 
@@ -715,14 +709,57 @@ function getAdaptiveShotHelperScale(
   {
     screenPixels = 14,
     minFactor = 1,
-    maxFactor = 1
+    maxFactor = 1,
+    baseFactor = 1
   } = {}
 ) {
   const scaleFromScreen = getWorldUnitsPerPixel(worldPoint) * screenPixels;
   const minScale = shotState.helperMinScale * minFactor;
   const maxScale = shotState.helperMaxScale * maxFactor;
-  const baseScale = Math.max(scaleFromScreen, shotState.helperBaseScale * minFactor);
+  const baseScale = Math.max(scaleFromScreen, shotState.helperBaseScale * baseFactor);
   return THREE.MathUtils.clamp(baseScale, minScale, maxScale);
+}
+
+function getAdaptiveShotMarkerOpacity(
+  worldPoint,
+  worldRadius,
+  {
+    selected = false,
+    hovered = false
+  } = {}
+) {
+  const distance = camera.position.distanceTo(worldPoint);
+  const nearDistance = Math.max(shotState.sceneRadius * 0.2, 0.18);
+  const farDistance = Math.max(shotState.sceneRadius * 0.85, nearDistance + 0.12);
+  const distanceFactor = THREE.MathUtils.clamp(
+    (distance - nearDistance) / Math.max(farDistance - nearDistance, 1e-6),
+    0,
+    1
+  );
+
+  const unitsPerPixel = Math.max(getWorldUnitsPerPixel(worldPoint), 1e-6);
+  const screenRadiusPx = worldRadius / unitsPerPixel;
+  const clearRadiusPx = selected ? 8 : hovered ? 7 : 6;
+  const fadeRadiusPx = selected ? 26 : hovered ? 24 : 22;
+  const screenFactor = THREE.MathUtils.clamp(
+    (fadeRadiusPx - screenRadiusPx) / Math.max(fadeRadiusPx - clearRadiusPx, 1e-6),
+    0,
+    1
+  );
+
+  const visibilityFactor = Math.min(distanceFactor, screenFactor);
+  const minOpacity = selected ? 0.42 : hovered ? 0.34 : 0.22;
+  const maxOpacity = selected ? 0.9 : hovered ? 0.76 : 0.62;
+  return THREE.MathUtils.lerp(minOpacity, maxOpacity, visibilityFactor);
+}
+
+function setShotHoverIndex(index) {
+  const nextIndex = index >= 0 && index < shotState.points.length ? index : -1;
+  if (shotState.hoverIndex === nextIndex) {
+    return;
+  }
+  shotState.hoverIndex = nextIndex;
+  updateShotVisuals();
 }
 
 function updateBrushCursor(clientX = null, clientY = null) {
@@ -824,6 +861,9 @@ function revealShotHelpers() {
 
 function updateShotVisuals() {
   ensureShotPointVisuals();
+  if (shotState.hoverIndex >= shotState.points.length) {
+    shotState.hoverIndex = -1;
+  }
   const helperVisible = areShotHelpersVisible();
 
   shotPivotMarker.group.visible = helperVisible && hasShotPivot;
@@ -842,43 +882,62 @@ function updateShotVisuals() {
     const shotPoint = shotState.points[index];
     const visual = shotState.visuals[index];
     const selected = index === shotState.selectedIndex;
+    const hovered = shotState.plannerMode && index === shotState.hoverIndex;
+    const emphasized = selected || hovered;
     const position = getShotPointPosition(shotPoint, tempVecA);
-    const direction = tempVecB.copy(shotPivot).sub(position).normalize();
-    const toPivot = tempVecC.copy(shotPivot).sub(position);
+    const frustumQuaternion = getShotPointQuaternion(position, tempQuat);
     const color = selected ? SHOT_POINT_SELECTED_COLOR : SHOT_POINT_COLOR;
-    const helperScale = getAdaptiveShotHelperScale(position, {
-      screenPixels: selected ? 15 : 13,
-      minFactor: selected ? 1.04 : 1,
-      maxFactor: selected ? 1.12 : 1
+    const markerScale = getAdaptiveShotHelperScale(position, {
+      screenPixels: selected ? 11 : hovered ? 10 : 9,
+      minFactor: selected ? 0.66 : hovered ? 0.62 : 0.58,
+      maxFactor: selected ? 0.9 : hovered ? 0.84 : 0.8,
+      baseFactor: selected ? 0.5 : hovered ? 0.46 : 0.42
     });
-    const bodyScale = selected ? 1.18 : 1;
-    const labelYOffset = selected ? 0.76 : 0.62;
+    const frustumScale = getAdaptiveShotHelperScale(position, {
+      screenPixels: selected ? 18 : 15,
+      minFactor: selected ? 0.7 : 0.62,
+      maxFactor: selected ? 0.96 : 0.86,
+      baseFactor: selected ? 0.56 : 0.48
+    });
+    const previewingCurrentPoint = selected
+      && camera.position.distanceToSquared(position) <= 1e-8
+      && camera.quaternion.angleTo(frustumQuaternion) <= 1e-4;
+    const bodyScale = selected ? 1.12 : hovered ? 1.04 : 0.98;
+    const labelYOffset = selected ? 0.72 : hovered ? 0.66 : 0.6;
 
-    visual.group.visible = helperVisible;
+    visual.group.visible = helperVisible && !previewingCurrentPoint;
+    if (!visual.group.visible) {
+      continue;
+    }
     visual.group.position.copy(position);
-    visual.group.scale.setScalar(helperScale);
+    visual.group.scale.setScalar(markerScale);
 
+    const markerWorldRadius = 0.22 * markerScale * bodyScale;
+    const markerOpacity = getAdaptiveShotMarkerOpacity(position, markerWorldRadius, {
+      selected,
+      hovered
+    });
     visual.body.material.color.setHex(color);
+    visual.body.material.opacity = markerOpacity;
     visual.body.scale.setScalar(bodyScale);
     visual.pickMesh.userData.shotPointIndex = index;
-
-    visual.linkPositions[0] = 0;
-    visual.linkPositions[1] = 0;
-    visual.linkPositions[2] = 0;
-    visual.linkPositions[3] = toPivot.x / visual.group.scale.x;
-    visual.linkPositions[4] = toPivot.y / visual.group.scale.y;
-    visual.linkPositions[5] = toPivot.z / visual.group.scale.z;
-    visual.linkLine.geometry.attributes.position.needsUpdate = true;
-    visual.linkLine.material.color.setHex(color);
-    visual.linkLine.material.opacity = selected ? 0.5 : 0.28;
-
-    visual.arrow.setDirection(direction);
-    visual.arrow.setLength(selected ? 1.65 : 1.4, selected ? 0.92 : 0.78, selected ? 0.62 : 0.52);
-    tempColor.setHex(color);
-    visual.arrow.setColor(tempColor);
+    visual.pickMesh.scale.setScalar(selected ? 1.5 : hovered ? 1.35 : 1.2);
+    visual.frustum.visible = emphasized;
+    visual.frustum.quaternion.copy(frustumQuaternion);
+    visual.frustum.material.color.setHex(color);
+    visual.frustum.material.opacity = selected ? 0.62 : 0.42;
+    const frustumHalfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+    const frustumHalfWidth = frustumHalfHeight * camera.aspect;
+    const frustumDepth = selected ? 1.8 : 1.35;
+    const frustumScaleRatio = frustumScale / Math.max(markerScale, 1e-6);
+    visual.frustum.scale.set(
+      frustumHalfWidth * frustumDepth * frustumScaleRatio,
+      frustumHalfHeight * frustumDepth * frustumScaleRatio,
+      frustumDepth * frustumScaleRatio
+    );
 
     visual.label.position.set(0, labelYOffset, 0);
-    visual.label.scale.set(selected ? 1.32 : 1.18, selected ? 0.64 : 0.58, 1);
+    visual.label.scale.set(selected ? 1.22 : hovered ? 1.14 : 1.08, selected ? 0.61 : hovered ? 0.58 : 0.54, 1);
     updateShotLabelVisual(visual, String(index + 1), selected);
   }
 }
@@ -896,6 +955,7 @@ function previewShotPoint(index) {
   if (!frame || !hasShotPivot) {
     return;
   }
+  shotState.hoverIndex = -1;
   camera.position.copy(frame.position);
   camera.quaternion.copy(frame.quaternion);
   orbitTarget.copy(shotPivot);
@@ -903,6 +963,7 @@ function previewShotPoint(index) {
 }
 
 function selectShotPoint(index, { preview = true } = {}) {
+  shotState.hoverIndex = -1;
   if (index < 0 || index >= shotState.points.length) {
     shotState.selectedIndex = -1;
     updateShotVisuals();
@@ -923,6 +984,7 @@ function syncShotPlanner({ previewSelection = false } = {}) {
     stopPlayback("⏸ 路径已更新");
   }
 
+  shotState.hoverIndex = -1;
   keyframes.length = 0;
   for (const shotPoint of shotState.points) {
     const position = getShotPointPosition(shotPoint, new THREE.Vector3());
@@ -962,6 +1024,7 @@ function initializeShotPlanner(focus) {
   shotState.helperMaxScale = Math.max(shotState.sceneRadius * 0.042, shotState.helperBaseScale * 1.75);
   shotState.points.length = 0;
   shotState.selectedIndex = -1;
+  shotState.hoverIndex = -1;
   setShotPivot(focus.center, { syncOrbit: true, previewSelection: false });
 }
 
@@ -970,6 +1033,7 @@ function setPlannerMode(enabled) {
     return;
   }
   shotState.plannerMode = enabled;
+  shotState.hoverIndex = -1;
   if (enabled) {
     revealShotHelpers();
   }
@@ -2039,12 +2103,14 @@ function handleCanvasMouseDown(event) {
   }
 
   if (event.button === 0 && rKeyDown && hasOrbitTarget) {
+    setShotHoverIndex(-1);
     beginOrbit(event);
     event.preventDefault();
     return;
   }
 
   if (event.button === 2) {
+    setShotHoverIndex(-1);
     beginPan(event);
     event.preventDefault();
     return;
@@ -2064,6 +2130,7 @@ function handleCanvasMouseDown(event) {
 
   if (!editState.editMode || !editState.ready) {
     if (event.button === 0) {
+      setShotHoverIndex(-1);
       beginRotate(event);
       event.preventDefault();
     }
@@ -2133,6 +2200,12 @@ function handleWindowMouseMove(event) {
       pointerState.lastBrushApplyTime = now;
       applyBrushSelection(event.clientX, event.clientY);
     }
+    return;
+  }
+
+  if (shotState.plannerMode) {
+    const hit = pickShotPoint(event);
+    setShotHoverIndex(hit ? hit.object.userData.shotPointIndex : -1);
   }
 }
 
@@ -2711,6 +2784,7 @@ renderer.domElement.addEventListener("mousedown", handleCanvasMouseDown);
 renderer.domElement.addEventListener("dblclick", handleCanvasDoubleClick);
 renderer.domElement.addEventListener("wheel", handleCanvasWheel, { passive: false });
 renderer.domElement.addEventListener("mouseleave", () => {
+  setShotHoverIndex(-1);
   if (editState.activeTool === "brush" && pointerState.action !== "brush") {
     updateBrushCursor();
   }
@@ -2722,6 +2796,7 @@ window.addEventListener("keydown", handleGlobalKeyDown);
 window.addEventListener("keyup", handleGlobalKeyUp);
 window.addEventListener("resize", handleResize);
 window.addEventListener("blur", () => {
+  setShotHoverIndex(-1);
   resetKeyboardLookState();
   endPointerAction();
   updateBrushCursor();
