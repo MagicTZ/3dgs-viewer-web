@@ -48,6 +48,7 @@ scene.add(shotHelperRoot);
 const crosshairEl = document.getElementById("crosshair");
 const selectionRectEl = document.getElementById("selectionRect");
 const brushCursorEl = document.getElementById("brushCursor");
+const viewGizmoEl = document.getElementById("viewGizmo");
 const modelInputEl = document.getElementById("modelInput");
 const emptyStateEl = document.getElementById("emptyState");
 const emptyStateTextEl = document.getElementById("emptyStateText");
@@ -95,8 +96,6 @@ const clearShotsBtn = document.getElementById("clearShotsBtn");
 const shotHintEl = document.getElementById("shotHint");
 const selectedShotLabelEl = document.getElementById("selectedShotLabel");
 const shotPointCountEl = document.getElementById("shotPointCount");
-const shotPivotLabelEl = document.getElementById("shotPivotLabel");
-const deleteModeLabelEl = document.getElementById("deleteModeLabel");
 
 const controls = new SparkControls({ canvas: renderer.domElement });
 controls.pointerControls.enable = false;
@@ -110,10 +109,21 @@ const tempVecA = new THREE.Vector3();
 const tempVecB = new THREE.Vector3();
 const tempVecC = new THREE.Vector3();
 const tempQuat = new THREE.Quaternion();
+const tempQuatB = new THREE.Quaternion();
 const tempColor = new THREE.Color();
 const tempVec2A = new THREE.Vector2();
 const tempVec2B = new THREE.Vector2();
 const tempViewportSize = new THREE.Vector2();
+
+const viewGizmoCtx = viewGizmoEl.getContext("2d");
+const VIEW_GIZMO_SIZE = 132;
+const VIEW_GIZMO_AXES = [
+  { label: "X", color: "#ff5a52", vector: new THREE.Vector3(1, 0, 0) },
+  { label: "Y", color: "#6dff4d", vector: new THREE.Vector3(0, 1, 0) },
+  { label: "Z", color: "#6f73ff", vector: new THREE.Vector3(0, 0, 1) }
+];
+const viewGizmoHitTargets = [];
+let viewGizmoClickTimer = 0;
 
 const keyframes = [];
 let pathLine = null;
@@ -134,6 +144,7 @@ const shotState = {
   points: [],
   selectedIndex: -1,
   hoverIndex: -1,
+  pivotExplicit: false,
   sceneRadius: 1,
   helperBaseScale: 0.05,
   helperMinScale: 0.02,
@@ -262,6 +273,8 @@ function clearShotState() {
   shotState.plannerMode = false;
   shotState.points.length = 0;
   shotState.selectedIndex = -1;
+  shotState.hoverIndex = -1;
+  shotState.pivotExplicit = false;
   shotState.helperActivated = false;
   shotState.helperVisible = true;
   hasShotPivot = false;
@@ -304,14 +317,10 @@ function updateModelUi() {
 
   modelNameLabelEl.textContent = visibleName;
 
-  if (modelState.loading) {
-    modelHintEl.textContent = `正在加载 ${modelState.pendingName}，完成后会自动重置当前镜头规划与删除编辑状态。`;
-  } else if (modelState.error) {
+  if (modelState.error) {
     modelHintEl.textContent = modelState.error;
-  } else if (hasModel) {
-    modelHintEl.textContent = "支持点击选择或拖拽本地 3DGS 文件到页面。加载新模型后会重置当前镜头规划与删除编辑状态。";
   } else {
-    modelHintEl.textContent = "支持点击选择或直接拖拽本地 3DGS 文件到页面。加载后即可进入镜头规划与删除编辑。";
+    modelHintEl.textContent = "";
   }
 
   emptyStateEl.hidden = hasModel;
@@ -1021,6 +1030,35 @@ function getShotPointQuaternion(position, target = new THREE.Quaternion()) {
   return target;
 }
 
+function getShotPointViewQuaternion(shotPoint, position, target = new THREE.Quaternion()) {
+  if (!shotState.pivotExplicit && shotPoint.quaternion instanceof THREE.Quaternion) {
+    return target.copy(shotPoint.quaternion);
+  }
+  return getShotPointQuaternion(position, target);
+}
+
+function getPlaybackQuaternionAt(t, position, target = new THREE.Quaternion()) {
+  if (shotState.pivotExplicit && hasShotPivot) {
+    return getShotPointQuaternion(position, target);
+  }
+
+  if (keyframes.length === 0) {
+    return target.copy(camera.quaternion);
+  }
+  if (keyframes.length === 1 || !positionCurve) {
+    return target.copy(keyframes[0].quaternion);
+  }
+
+  const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+  const curveT = typeof positionCurve.getUtoTmapping === "function"
+    ? positionCurve.getUtoTmapping(clampedT)
+    : clampedT;
+  const scaled = curveT * (keyframes.length - 1);
+  const index = Math.min(Math.floor(scaled), keyframes.length - 2);
+  const localT = THREE.MathUtils.clamp(scaled - index, 0, 1);
+  return target.copy(keyframes[index].quaternion).slerp(keyframes[index + 1].quaternion, localT);
+}
+
 function stopPlayback(statusText = "") {
   playing = false;
   playT = 0;
@@ -1096,7 +1134,7 @@ function updateShotVisuals() {
   }
   const helperVisible = areShotHelpersVisible();
 
-  shotPivotMarker.group.visible = helperVisible && hasShotPivot;
+  shotPivotMarker.group.visible = helperVisible && hasShotPivot && shotState.pivotExplicit;
   if (hasShotPivot) {
     const pivotScale = getAdaptiveShotHelperScale(shotPivot, {
       screenPixels: 18,
@@ -1115,7 +1153,7 @@ function updateShotVisuals() {
     const hovered = shotState.plannerMode && index === shotState.hoverIndex;
     const emphasized = selected || hovered;
     const position = getShotPointPosition(shotPoint, tempVecA);
-    const frustumQuaternion = getShotPointQuaternion(position, tempQuat);
+    const frustumQuaternion = getShotPointViewQuaternion(shotPoint, position, tempQuat);
     const color = selected ? SHOT_POINT_SELECTED_COLOR : SHOT_POINT_COLOR;
     const markerScale = getAdaptiveShotHelperScale(position, {
       screenPixels: selected ? 11 : hovered ? 10 : 9,
@@ -1218,7 +1256,7 @@ function syncShotPlanner({ previewSelection = false } = {}) {
   keyframes.length = 0;
   for (const shotPoint of shotState.points) {
     const position = getShotPointPosition(shotPoint, new THREE.Vector3());
-    const quaternion = getShotPointQuaternion(position, new THREE.Quaternion());
+    const quaternion = getShotPointViewQuaternion(shotPoint, position, new THREE.Quaternion());
     keyframes.push({ position, quaternion });
   }
 
@@ -1234,9 +1272,10 @@ function syncShotPlanner({ previewSelection = false } = {}) {
   updateShotUi();
 }
 
-function setShotPivot(point, { syncOrbit = true, previewSelection = true, revealHelpers = false } = {}) {
+function setShotPivot(point, { syncOrbit = true, previewSelection = true, revealHelpers = false, explicit = true } = {}) {
   shotPivot.copy(point);
   hasShotPivot = true;
+  shotState.pivotExplicit = explicit;
   if (syncOrbit) {
     orbitTarget.copy(point);
     hasOrbitTarget = true;
@@ -1255,7 +1294,7 @@ function initializeShotPlanner(focus) {
   shotState.points.length = 0;
   shotState.selectedIndex = -1;
   shotState.hoverIndex = -1;
-  setShotPivot(focus.center, { syncOrbit: true, previewSelection: false });
+  setShotPivot(focus.center, { syncOrbit: true, previewSelection: false, explicit: false });
 }
 
 function setPlannerMode(enabled) {
@@ -1285,11 +1324,17 @@ function createShotPointFromCurrentCamera() {
   const offsetZ = camera.position.z - shotPivot.z;
   const radius = Math.max(SHOT_MIN_RADIUS, Math.hypot(offsetX, offsetZ));
 
-  return {
+  const shotPoint = {
     radius,
     azimuth: normalizeAngle(Math.atan2(offsetZ, offsetX)),
     height: offsetY
   };
+
+  if (!shotState.pivotExplicit) {
+    shotPoint.quaternion = camera.quaternion.clone();
+  }
+
+  return shotPoint;
 }
 
 function insertShotPoint() {
@@ -1354,10 +1399,6 @@ function updateShotUi() {
   kfCountEl.textContent = `镜头点: ${shotState.points.length}`;
   shotPointCountEl.textContent = String(shotState.points.length);
   selectedShotLabelEl.textContent = hasSelection ? `#${shotState.selectedIndex + 1}` : "未选中";
-  shotPivotLabelEl.textContent = hasShotPivot
-    ? shotPivot.toArray().map((value) => value.toFixed(2)).join(", ")
-    : "未设置";
-  deleteModeLabelEl.textContent = shotState.plannerMode ? "删除镜头点" : editState.editMode ? "删除 splats" : "未激活";
 
   if (modelState.loading) {
     shotHintEl.textContent = "模型加载中，镜头规划暂不可用。";
@@ -1374,7 +1415,7 @@ function updateShotUi() {
       shotHintEl.textContent = "点镜头点预览，+ 插点。少于 2 个点时无法播放或导出。";
     }
   } else {
-    shotHintEl.textContent = "进入规划后可选中镜头点预览；双击可重设中心。";
+    shotHintEl.textContent = "进入规划后点镜头点预览；双击重设中心。";
   }
 
   exportBtn.disabled = blocked || shotState.points.length < 2;
@@ -2172,20 +2213,10 @@ function updateOrbit(event) {
   offset.x = newX;
   offset.z = newZ;
 
-  const elevation = -deltaY * ORBIT_SPEED;
-  const horizontalDist = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-  const currentElevAngle = Math.atan2(offset.y, horizontalDist);
-  const nextElevAngle = THREE.MathUtils.clamp(
-    currentElevAngle + elevation,
-    -Math.PI / 2 + 0.05,
-    Math.PI / 2 - 0.05
-  );
-  const radius = offset.length();
-  offset.y = radius * Math.sin(nextElevAngle);
-  const nextHorizontalDist = radius * Math.cos(nextElevAngle);
-  const scale = horizontalDist > 0.001 ? nextHorizontalDist / horizontalDist : 0;
-  offset.x *= scale;
-  offset.z *= scale;
+  if (deltaY !== 0) {
+    tempVecA.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    offset.applyAxisAngle(tempVecA, -deltaY * ORBIT_SPEED);
+  }
 
   camera.position.copy(orbitTarget).add(offset);
 
@@ -2218,14 +2249,16 @@ function updateRotate(event) {
   pointerState.lastX = event.clientX;
   pointerState.lastY = event.clientY;
 
-  const eulers = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
-  eulers.y -= deltaX * LOOK_SPEED;
-  eulers.x = THREE.MathUtils.clamp(
-    eulers.x - deltaY * LOOK_SPEED,
-    -Math.PI / 2 + 0.001,
-    Math.PI / 2 - 0.001
-  );
-  camera.quaternion.setFromEuler(eulers);
+  if (deltaX !== 0) {
+    tempQuat.setFromAxisAngle(WORLD_UP, -deltaX * LOOK_SPEED);
+    camera.quaternion.premultiply(tempQuat);
+  }
+  if (deltaY !== 0) {
+    tempVecA.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    tempQuat.setFromAxisAngle(tempVecA, -deltaY * LOOK_SPEED);
+    camera.quaternion.premultiply(tempQuat);
+  }
+  camera.quaternion.normalize();
 }
 
 function resetKeyboardLookState() {
@@ -2262,33 +2295,165 @@ function updateKeyboardLook(deltaTime) {
     return;
   }
 
-  const sceneUp = WORLD_UP;
   const lookAmount = KEYBOARD_LOOK_SPEED * deltaTime;
-  camera.getWorldDirection(tempVecA);
-  tempVecA.normalize();
 
   if (yawInput !== 0) {
-    tempVecA.applyAxisAngle(sceneUp, yawInput * lookAmount).normalize();
+    tempQuat.setFromAxisAngle(WORLD_UP, yawInput * lookAmount);
+    camera.quaternion.premultiply(tempQuat);
   }
 
   if (pitchInput !== 0) {
-    tempVecB.crossVectors(tempVecA, sceneUp);
-    const rightLengthSq = tempVecB.lengthSq();
-    if (rightLengthSq > 1e-10) {
-      tempVecB.multiplyScalar(1 / Math.sqrt(rightLengthSq));
-      const currentElevation = Math.asin(THREE.MathUtils.clamp(tempVecA.dot(sceneUp), -1, 1));
-      const targetElevation = THREE.MathUtils.clamp(
-        currentElevation + pitchInput * lookAmount,
-        -Math.PI / 2 + 0.001,
-        Math.PI / 2 - 0.001
-      );
-      tempVecA.applyAxisAngle(tempVecB, targetElevation - currentElevation).normalize();
-    }
+    tempVecA.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    tempQuat.setFromAxisAngle(tempVecA, pitchInput * lookAmount);
+    camera.quaternion.premultiply(tempQuat);
+  }
+  camera.quaternion.normalize();
+}
+
+function resizeViewGizmoCanvas() {
+  const dpr = Math.max(window.devicePixelRatio || 1, 1);
+  viewGizmoEl.width = Math.round(VIEW_GIZMO_SIZE * dpr);
+  viewGizmoEl.height = Math.round(VIEW_GIZMO_SIZE * dpr);
+  viewGizmoCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function getAxisAlignmentUp(axisVector) {
+  if (Math.abs(axisVector.dot(WORLD_UP)) > 0.98) {
+    return tempVecB.set(0, 0, 1);
+  }
+  return tempVecB.copy(WORLD_UP);
+}
+
+function alignCameraToAxis(axisVector, directionSign = 1) {
+  const target = hasOrbitTarget ? orbitTarget : hasShotPivot ? shotPivot : null;
+  if (!target) {
+    return;
   }
 
-  tempVecC.copy(camera.position).add(tempVecA);
-  tempMatrix.lookAt(camera.position, tempVecC, sceneUp);
+  const distance = Math.max(camera.position.distanceTo(target), 0.25);
+  tempVecA.copy(axisVector).normalize().multiplyScalar(distance * directionSign);
+  camera.position.copy(target).add(tempVecA);
+
+  const upVector = getAxisAlignmentUp(axisVector);
+  tempMatrix.lookAt(camera.position, target, upVector);
   camera.quaternion.setFromRotationMatrix(tempMatrix);
+  camera.quaternion.normalize();
+}
+
+function findViewGizmoAxisHit(event) {
+  const rect = viewGizmoEl.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  for (const target of viewGizmoHitTargets) {
+    const dx = x - target.x;
+    const dy = y - target.y;
+    if (dx * dx + dy * dy <= target.radius * target.radius) {
+      return target;
+    }
+  }
+  return null;
+}
+
+function drawViewGizmo() {
+  const size = VIEW_GIZMO_SIZE;
+  const center = size * 0.5;
+  const axisRadius = size * 0.34;
+  const nodeRadius = 14;
+  const backNodes = [];
+  const frontNodes = [];
+
+  viewGizmoCtx.clearRect(0, 0, size, size);
+  viewGizmoHitTargets.length = 0;
+
+  viewGizmoCtx.beginPath();
+  viewGizmoCtx.arc(center, center, size * 0.42, 0, Math.PI * 2);
+  viewGizmoCtx.fillStyle = "rgba(8, 12, 16, 0.2)";
+  viewGizmoCtx.fill();
+
+  tempQuat.copy(camera.quaternion).invert();
+  const axisEntries = VIEW_GIZMO_AXES.map((axis) => {
+    const direction = axis.vector.clone().applyQuaternion(tempQuat);
+    return {
+      ...axis,
+      direction,
+      depth: direction.z
+    };
+  }).sort((a, b) => a.depth - b.depth);
+
+  for (const axis of axisEntries) {
+    const endpointX = center + axis.direction.x * axisRadius;
+    const endpointY = center - axis.direction.y * axisRadius;
+    const oppositeX = center - axis.direction.x * axisRadius;
+    const oppositeY = center + axis.direction.y * axisRadius;
+    const alpha = THREE.MathUtils.lerp(0.42, 0.98, (axis.depth + 1) * 0.5);
+
+    viewGizmoCtx.beginPath();
+    viewGizmoCtx.moveTo(center, center);
+    viewGizmoCtx.lineTo(endpointX, endpointY);
+    viewGizmoCtx.lineWidth = 3;
+    viewGizmoCtx.strokeStyle = `${axis.color}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
+    viewGizmoCtx.stroke();
+
+    const positiveNode = {
+      axis,
+      x: endpointX,
+      y: endpointY,
+      radius: nodeRadius,
+      depth: axis.depth,
+      label: axis.label,
+      color: axis.color,
+      solid: true
+    };
+    const negativeNode = {
+      axis,
+      x: oppositeX,
+      y: oppositeY,
+      radius: nodeRadius * 0.9,
+      depth: -axis.depth,
+      label: "",
+      color: axis.color,
+      solid: false
+    };
+
+    (positiveNode.depth >= 0 ? frontNodes : backNodes).push(positiveNode);
+    (negativeNode.depth >= 0 ? frontNodes : backNodes).push(negativeNode);
+    viewGizmoHitTargets.push({
+      axis,
+      x: endpointX,
+      y: endpointY,
+      radius: nodeRadius + 5
+    });
+  }
+
+  const drawNode = (node) => {
+    viewGizmoCtx.beginPath();
+    viewGizmoCtx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    viewGizmoCtx.lineWidth = 2;
+    viewGizmoCtx.strokeStyle = node.solid ? "rgba(15, 20, 24, 0.9)" : `${node.color}cc`;
+    if (node.solid) {
+      viewGizmoCtx.fillStyle = node.color;
+      viewGizmoCtx.fill();
+    }
+    viewGizmoCtx.stroke();
+
+    if (node.label) {
+      viewGizmoCtx.fillStyle = "#101418";
+      viewGizmoCtx.font = "700 16px monospace";
+      viewGizmoCtx.textAlign = "center";
+      viewGizmoCtx.textBaseline = "middle";
+      viewGizmoCtx.fillText(node.label, node.x, node.y + 1);
+    }
+  };
+
+  backNodes.sort((a, b) => a.depth - b.depth).forEach(drawNode);
+
+  viewGizmoCtx.beginPath();
+  viewGizmoCtx.arc(center, center, 5.5, 0, Math.PI * 2);
+  viewGizmoCtx.fillStyle = "rgba(198, 212, 220, 0.85)";
+  viewGizmoCtx.fill();
+
+  frontNodes.sort((a, b) => a.depth - b.depth).forEach(drawNode);
 }
 
 function updatePan(event) {
@@ -2489,7 +2654,7 @@ function handleCanvasDoubleClick(event) {
   if (!hit) {
     return;
   }
-  setShotPivot(hit.point, { revealHelpers: true });
+  setShotPivot(hit.point, { revealHelpers: true, explicit: true });
 }
 
 function handleCanvasWheel(event) {
@@ -2557,7 +2722,7 @@ function applyPlaybackFrame(t) {
 
   const clampedT = THREE.MathUtils.clamp(t, 0, 1);
   camera.position.copy(positionCurve.getPointAt(clampedT));
-  getShotPointQuaternion(camera.position, camera.quaternion);
+  getPlaybackQuaternionAt(clampedT, camera.position, camera.quaternion);
 
   if (hasShotPivot) {
     orbitTarget.copy(shotPivot);
@@ -2976,6 +3141,7 @@ function handleResize() {
   renderer.setViewport(0, 0, innerWidth, innerHeight);
   camera.aspect = playbackPreviewLockedAspect ? getSelectedOutputAspect() : innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  resizeViewGizmoCanvas();
   updateShotVisuals();
 }
 
@@ -3046,6 +3212,32 @@ fpsInput.addEventListener("input", updateFrameInfo);
 durationInput.addEventListener("input", updateFrameInfo);
 resSelect.addEventListener("change", updateFrameInfo);
 exportBtn.addEventListener("click", exportVideo);
+viewGizmoEl.addEventListener("click", (event) => {
+  const hit = findViewGizmoAxisHit(event);
+  if (!hit) {
+    return;
+  }
+  event.preventDefault();
+  if (viewGizmoClickTimer) {
+    window.clearTimeout(viewGizmoClickTimer);
+  }
+  viewGizmoClickTimer = window.setTimeout(() => {
+    viewGizmoClickTimer = 0;
+    alignCameraToAxis(hit.axis.vector, 1);
+  }, 220);
+});
+viewGizmoEl.addEventListener("dblclick", (event) => {
+  const hit = findViewGizmoAxisHit(event);
+  if (!hit) {
+    return;
+  }
+  event.preventDefault();
+  if (viewGizmoClickTimer) {
+    window.clearTimeout(viewGizmoClickTimer);
+    viewGizmoClickTimer = 0;
+  }
+  alignCameraToAxis(hit.axis.vector, -1);
+});
 
 renderer.domElement.addEventListener("mousedown", handleCanvasMouseDown);
 renderer.domElement.addEventListener("dblclick", handleCanvasDoubleClick);
@@ -3110,6 +3302,10 @@ window.addEventListener("blur", () => {
   resetKeyboardLookState();
   endPointerAction();
   updateBrushCursor();
+  if (viewGizmoClickTimer) {
+    window.clearTimeout(viewGizmoClickTimer);
+    viewGizmoClickTimer = 0;
+  }
   modelState.dragDepth = 0;
   setDragOverlayActive(false);
 });
@@ -3118,6 +3314,7 @@ updateFrameInfo();
 updateModelUi();
 updateEditUi();
 updateShotUi();
+resizeViewGizmoCanvas();
 
 renderer.setAnimationLoop((time) => {
   if (exporting) {
@@ -3135,4 +3332,5 @@ renderer.setAnimationLoop((time) => {
 
   updateShotVisuals();
   renderSceneFrame();
+  drawViewGizmo();
 });

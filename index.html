@@ -6,14 +6,27 @@
   <style>
     :root {
       --side-panel-width: min(320px, calc(100vw - 20px));
+      --top-gizmo-size: 132px;
     }
     body { margin: 0; overflow: hidden; }
+    #rightColumn {
+      position: fixed;
+      right: 10px;
+      top: 10px;
+      width: var(--side-panel-width);
+      max-height: calc(100vh - 20px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: stretch;
+      z-index: 20;
+    }
     #info {
-      position: fixed; right: 10px; bottom: 10px; color: white;
+      position: static; color: white;
       font-family: monospace; font-size: 12px; line-height: 1.45;
       background: rgba(0,0,0,0.72); padding: 10px 12px; border-radius: 8px;
       pointer-events: none; z-index: 10; box-sizing: border-box;
-      width: var(--side-panel-width);
+      width: 100%;
       border: 1px solid rgba(255,255,255,0.08);
     }
     .infoTitle {
@@ -49,10 +62,10 @@
       transform: translate(-50%, -50%); display: none;
     }
     #exportPanel {
-      position: fixed; top: 10px; right: 10px; color: white;
+      position: static; color: white;
       font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.75);
       padding: 12px 16px; border-radius: 8px; z-index: 20;
-      width: var(--side-panel-width); box-sizing: border-box;
+      width: 100%; box-sizing: border-box;
     }
     #exportPanel h3 { margin: 0 0 8px 0; font-size: 15px; color: #44ff44; }
     #exportPanel label { display: block; margin: 6px 0 2px; }
@@ -153,6 +166,9 @@
       line-height: 1.45;
       color: #b8d8ca;
     }
+    #modelHint:empty {
+      display: none;
+    }
     #shotPanel {
       position: static; color: white;
       font-family: monospace; font-size: 13px; background: rgba(0,0,0,0.82);
@@ -185,10 +201,10 @@
       border: 1px solid rgba(113, 205, 255, 0.32);
     }
     #shotHint {
-      margin-top: 8px; font-size: 12px; color: #b4c6d0; min-height: 48px; line-height: 1.45;
+      margin-top: 6px; font-size: 12px; color: #b4c6d0; min-height: 0; line-height: 1.35;
     }
     #shotStats {
-      margin-top: 8px; font-size: 12px; color: #d7e7ef; line-height: 1.55;
+      margin-top: 5px; font-size: 12px; color: #d7e7ef; line-height: 1.45;
     }
     #selectionRect {
       position: fixed; border: 1px dashed #ffbb44; background: rgba(255,187,68,0.12);
@@ -198,6 +214,16 @@
       position: fixed; border: 2px solid #ffbb44; background: rgba(255,187,68,0.08);
       border-radius: 50%; pointer-events: none; z-index: 30; display: none;
       transform: translate(-50%, -50%);
+    }
+    #viewGizmo {
+      position: static;
+      width: var(--top-gizmo-size);
+      height: var(--top-gizmo-size);
+      pointer-events: auto;
+      cursor: pointer;
+      align-self: flex-end;
+      flex: 0 0 auto;
+      z-index: 21;
     }
     #emptyState {
       position: fixed;
@@ -309,21 +335,43 @@
   </script>
 </head>
 <body>
-  <div id="info">
-    <div class="infoTitle">快捷操作</div>
-    <div class="infoGrid">
-      <div class="infoLabel">模型</div>
-      <div>打开文件 / 拖拽加载 / 支持 .ply .splat .spz .ksplat</div>
-      <div class="infoLabel">导航</div>
-      <div>左拖旋转 / 右拖平移 / 滚轮缩放 / 方向键转向 / R+左拖环绕</div>
-      <div class="infoLabel">镜头</div>
-      <div>双击设中心 / 规划模式点位预览 / + 插点 / Del 删点 / C 清空 / P 播放</div>
-      <div class="infoLabel">编辑</div>
-      <div>E 切换 / 1 Picker / 2 Brush / Esc 清选 / Del 删除 / Ctrl+Z/Y 撤销重做</div>
+  <div id="rightColumn">
+    <canvas id="viewGizmo" width="132" height="132" aria-hidden="true"></canvas>
+    <div id="exportPanel">
+      <h3>导出视频</h3>
+      <label>分辨率</label>
+      <select id="resSelect">
+        <option value="1080" selected>1080p (1920×1080)</option>
+        <option value="2160">2K (2560×1440)</option>
+        <option value="4320">4K (3840×2160)</option>
+      </select>
+      <label>帧率 (FPS)</label>
+      <input id="fpsInput" type="number" value="30" min="1" max="120">
+      <label>总时长 (秒)</label>
+      <input id="durationInput" type="number" value="5" min="1" max="300" step="0.5">
+      <div id="exportFrameInfo" style="font-size:12px;color:#aaa;margin-top:2px">总帧数: 150</div>
+      <label>码率 (Mbps)</label>
+      <input id="bitrateInput" type="number" value="10" min="1" max="100" step="1">
+      <button id="exportBtn">导出 MP4 视频</button>
+      <div id="exportProgress" style="display:none"><div id="exportProgressBar"></div></div>
+      <div id="exportStatus"></div>
     </div>
-    <div class="infoFooter">
-      <span id="kfCount">镜头点: 0</span>
-      <span id="playStatus"></span>
+    <div id="info">
+      <div class="infoTitle">快捷操作</div>
+      <div class="infoGrid">
+        <div class="infoLabel">模型</div>
+        <div>打开文件 / 拖拽加载 / 支持 .ply .splat .spz .ksplat</div>
+        <div class="infoLabel">导航</div>
+        <div>左拖旋转 / 右拖平移 / 滚轮缩放 / 方向键转向 / R+左拖环绕</div>
+        <div class="infoLabel">镜头</div>
+        <div>双击设中心 / 规划模式点位预览 / + 插点 / Del 删点 / C 清空 / P 播放</div>
+        <div class="infoLabel">编辑</div>
+        <div>E 切换 / 1 Picker / 2 Brush / Esc 清选 / Del 删除 / Ctrl+Z/Y 撤销重做</div>
+      </div>
+      <div class="infoFooter">
+        <span id="kfCount">镜头点: 0</span>
+        <span id="playStatus"></span>
+      </div>
     </div>
   </div>
   <div id="crosshair"></div>
@@ -352,7 +400,7 @@
         <div><strong>当前状态:</strong> <span id="modelStatusLabel">等待上传</span></div>
         <div><strong>当前模型:</strong> <span id="modelNameLabel">未加载</span></div>
       </div>
-      <div id="modelHint">支持点击选择或直接拖拽本地 3DGS 文件到页面。上传后会重置当前镜头规划与删除编辑状态。</div>
+      <div id="modelHint"></div>
     </div>
     <div id="shotPanel">
       <h3>镜头规划</h3>
@@ -369,8 +417,6 @@
       <div id="shotStats">
         <div>当前镜头点: <span id="selectedShotLabel">未选中</span></div>
         <div>镜头点数量: <span id="shotPointCount">0</span></div>
-        <div>固定中心点: <span id="shotPivotLabel">未设置</span></div>
-        <div>删除语义: <span id="deleteModeLabel">删除 splats</span></div>
       </div>
     </div>
     <div id="editPanel">
@@ -405,25 +451,6 @@
       </div>
     </div>
   </div>
-  <div id="exportPanel">
-    <h3>导出视频</h3>
-    <label>分辨率</label>
-    <select id="resSelect">
-      <option value="1080" selected>1080p (1920×1080)</option>
-      <option value="2160">2K (2560×1440)</option>
-      <option value="4320">4K (3840×2160)</option>
-    </select>
-    <label>帧率 (FPS)</label>
-    <input id="fpsInput" type="number" value="30" min="1" max="120">
-    <label>总时长 (秒)</label>
-    <input id="durationInput" type="number" value="5" min="1" max="300" step="0.5">
-    <div id="exportFrameInfo" style="font-size:12px;color:#aaa;margin-top:2px">总帧数: 150</div>
-    <label>码率 (Mbps)</label>
-    <input id="bitrateInput" type="number" value="10" min="1" max="100" step="1">
-    <button id="exportBtn">导出 MP4 视频</button>
-    <div id="exportProgress" style="display:none"><div id="exportProgressBar"></div></div>
-    <div id="exportStatus"></div>
-  </div>
-  <script type="module" src="./viewer.js?v=20260422-local-upload"></script>
+  <script type="module" src="./viewer.js?v=20260422-view-gizmo-align"></script>
 </body>
 </html>
