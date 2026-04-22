@@ -355,6 +355,7 @@ function applyLoadedModel(mesh, name) {
   alignSplatSceneToWorldUp(mesh);
   const focus = autoFocusMesh(mesh);
   initializeEditing(mesh, focus);
+  refreshShotHelperMetricsFromVisibleSplats();
 
   modelState.ready = true;
   modelState.loading = false;
@@ -959,6 +960,13 @@ function getAdaptiveShotHelperScale(
   return THREE.MathUtils.clamp(baseScale, minScale, maxScale);
 }
 
+function updateShotHelperMetricsFromSize(size) {
+  shotState.sceneRadius = Math.max(size.length() * 0.5, 0.5);
+  shotState.helperMinScale = Math.max(shotState.sceneRadius * 0.012, 0.014);
+  shotState.helperBaseScale = Math.max(shotState.sceneRadius * 0.02, shotState.helperMinScale * 1.2);
+  shotState.helperMaxScale = Math.max(shotState.sceneRadius * 0.042, shotState.helperBaseScale * 1.75);
+}
+
 function getAdaptiveShotMarkerOpacity(
   worldPoint,
   worldRadius,
@@ -1287,10 +1295,7 @@ function setShotPivot(point, { syncOrbit = true, previewSelection = true, reveal
 }
 
 function initializeShotPlanner(focus) {
-  shotState.sceneRadius = Math.max(focus.size.length() * 0.5, 0.5);
-  shotState.helperMinScale = Math.max(shotState.sceneRadius * 0.012, 0.014);
-  shotState.helperBaseScale = Math.max(shotState.sceneRadius * 0.02, shotState.helperMinScale * 1.2);
-  shotState.helperMaxScale = Math.max(shotState.sceneRadius * 0.042, shotState.helperBaseScale * 1.75);
+  updateShotHelperMetricsFromSize(focus.size);
   shotState.points.length = 0;
   shotState.selectedIndex = -1;
   shotState.hoverIndex = -1;
@@ -1455,9 +1460,9 @@ function focusCameraOnBounds(center, size) {
   hasOrbitTarget = true;
 }
 
-function focusVisibleSplats() {
+function getVisibleSplatBounds() {
   if (!editState.ready) {
-    return false;
+    return null;
   }
 
   let visibleCount = 0;
@@ -1493,12 +1498,35 @@ function focusVisibleSplats() {
   }
 
   if (visibleCount === 0) {
-    return false;
+    return null;
   }
 
   const center = new THREE.Vector3(sumX / visibleCount, sumY / visibleCount, sumZ / visibleCount);
   const size = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
+  return { center, size, visibleCount };
+}
+
+function refreshShotHelperMetricsFromVisibleSplats() {
+  const bounds = getVisibleSplatBounds();
+  if (!bounds) {
+    return false;
+  }
+
+  updateShotHelperMetricsFromSize(bounds.size);
+  updateShotVisuals();
+  return true;
+}
+
+function focusVisibleSplats() {
+  const bounds = getVisibleSplatBounds();
+  if (!bounds) {
+    return false;
+  }
+
+  const { center, size } = bounds;
+  updateShotHelperMetricsFromSize(size);
   focusCameraOnBounds(center, size);
+  updateShotVisuals();
 
   return true;
 }
@@ -1935,6 +1963,7 @@ function deleteSelectedSplats() {
   editState.redoStack.length = 0;
 
   applyVisualChanges(deletedIndices);
+  refreshShotHelperMetricsFromVisibleSplats();
   updateEditUi();
 }
 
@@ -1954,6 +1983,7 @@ function undoDelete() {
   }
   editState.redoStack.push(action);
   applyVisualChanges(changedIndices);
+  refreshShotHelperMetricsFromVisibleSplats();
   updateEditUi();
 }
 
@@ -1977,6 +2007,7 @@ function redoDelete() {
   }
   editState.undoStack.push(action);
   applyVisualChanges(changedIndices);
+  refreshShotHelperMetricsFromVisibleSplats();
   updateEditUi();
 }
 
