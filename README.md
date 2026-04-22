@@ -11,6 +11,12 @@
 
 ---
 
+## 🎥 动态演示
+
+<img src="./assets/demo.gif" alt="3DGS Studio demo" width="100%" />
+
+---
+
 ## 📸 界面预览
 
 ![Overview](./docs/images/overview.png)
