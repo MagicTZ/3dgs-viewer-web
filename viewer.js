@@ -22,6 +22,7 @@ const SHOT_PIVOT_COLOR = 0x58f0ff;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const SHOT_PICK_SCREEN_RADIUS_PX = 22;
 const MODEL_FILE_EXTENSIONS = new Set(["ply", "splat", "spz", "ksplat"]);
+const UI_CANVAS_FONT_FAMILY = '"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif';
 
 const EXPORT_RESOLUTIONS = {
   "1080": { width: 1920, height: 1080 },
@@ -836,7 +837,7 @@ function createLabelSprite(
   ctx.strokeStyle = border;
   ctx.stroke();
   ctx.fillStyle = color;
-  ctx.font = `700 ${fontSize}px monospace`;
+  ctx.font = `700 ${fontSize}px ${UI_CANVAS_FONT_FAMILY}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, width * 0.5, height * 0.56);
@@ -2813,7 +2814,7 @@ function drawViewGizmo() {
 
     if (node.label) {
       viewGizmoCtx.fillStyle = "#101418";
-      viewGizmoCtx.font = "700 16px monospace";
+      viewGizmoCtx.font = `700 16px ${UI_CANVAS_FONT_FAMILY}`;
       viewGizmoCtx.textAlign = "center";
       viewGizmoCtx.textBaseline = "middle";
       viewGizmoCtx.fillText(node.label, node.x, node.y + 1);
