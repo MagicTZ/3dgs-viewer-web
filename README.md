@@ -5,7 +5,7 @@
 <h1 align="center">3DGS Studio</h1>
 
 <p align="center">
-  English-first browser workstation for 3D Gaussian Splatting.
+  Browser workstation for 3D Gaussian Splatting.
 </p>
 
 <p align="center">
@@ -29,8 +29,6 @@
 </p>
 
 `3DGS Studio` turns the browser into a lightweight 3DGS presentation workstation. Instead of stopping at scene inspection, it covers the full loop: load a local model, remove stray splats, block out a camera path around a pivot, preview the motion, and export the result as MP4.
-
-The repository now defaults to English. The UI includes an `EN / 中文` switcher, and the Chinese README and guide remain available.
 
 ## Why It Feels Different
 
@@ -58,7 +56,7 @@ The repository now defaults to English. The UI includes an `EN / 中文` switche
 | Shot Planning | Pivot-based camera focus, discrete shot points, path preview, MP4 export |
 | Splat Editing | `Picker`, `Brush`, multi-step undo/redo, visible-splat `.ply` save |
 | Viewer Workflow | Local uploads, drag and drop, world-up alignment, keyboard-friendly controls |
-| Bilingual UX | English-default repository and UI, with direct Chinese access preserved |
+| Presentation Loop | Load, clean, plan, preview, and export in one place |
 
 ## Quick Start
 
