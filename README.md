@@ -1,4 +1,8 @@
-# 3DGS Studio 
+<p align="center">
+  <img src="./docs/images/logo.png" alt="3DGS Studio logo" width="220" />
+</p>
+
+<h1 align="center">3DGS Studio</h1>
 
 > 🎨 **不仅仅是查看器：在浏览器中直接展示、清理、规划并导出 3D Gaussian Splatting 场景**
 
