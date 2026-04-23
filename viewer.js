@@ -22,6 +22,7 @@ const SHOT_PIVOT_COLOR = 0x58f0ff;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const SHOT_PICK_SCREEN_RADIUS_PX = 22;
 const MODEL_FILE_EXTENSIONS = new Set(["ply", "splat", "spz", "ksplat"]);
+const UI_CANVAS_FONT_FAMILY = '"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif';
 
 const EXPORT_RESOLUTIONS = {
   "1080": { width: 1920, height: 1080 },
@@ -49,6 +50,8 @@ const crosshairEl = document.getElementById("crosshair");
 const selectionRectEl = document.getElementById("selectionRect");
 const brushCursorEl = document.getElementById("brushCursor");
 const viewGizmoEl = document.getElementById("viewGizmo");
+const languageButtons = Array.from(document.querySelectorAll(".languageBtn"));
+const translatableElements = Array.from(document.querySelectorAll("[data-i18n]"));
 const modelInputEl = document.getElementById("modelInput");
 const emptyStateEl = document.getElementById("emptyState");
 const emptyStateTextEl = document.getElementById("emptyStateText");
@@ -96,6 +99,234 @@ const clearShotsBtn = document.getElementById("clearShotsBtn");
 const shotHintEl = document.getElementById("shotHint");
 const selectedShotLabelEl = document.getElementById("selectedShotLabel");
 const shotPointCountEl = document.getElementById("shotPointCount");
+
+const DEFAULT_LANGUAGE = "en";
+const LANGUAGE_STORAGE_KEY = "3dgs-viewer-language";
+const I18N = {
+  en: {
+    "export.title": "Export Video",
+    "export.resolution": "Resolution",
+    "export.fps": "Frame Rate (FPS)",
+    "export.duration": "Duration (s)",
+    "export.bitrate": "Bitrate (Mbps)",
+    "export.button": "Export MP4",
+    "export.frameInfo": "Frames: {frames} | Output: {width}x{height}",
+    "export.status.needTwo": "Create at least 2 shot points first",
+    "export.status.unsupportedWebCodecs": "WebCodecs is not supported in this browser. Use Chrome or Edge.",
+    "export.status.loadingEncoder": "Loading encoder...",
+    "export.status.loadingMuxerFailed": "Failed to load mp4-muxer: {message}",
+    "export.status.encoderError": "Encoder error: {message}",
+    "export.status.rendering": "Rendering... {current}/{total} ({percent}%)",
+    "export.status.compositing": "Compositing video...",
+    "export.status.done": "Export complete: {sizeMb} MB, {totalFrames} frames",
+    "export.status.failed": "Export failed: {message}",
+    "export.error.canvasContext": "Unable to create an export canvas context",
+    "info.title": "Quick Controls",
+    "info.model.label": "Model",
+    "info.model.value": "Open file / Drag and drop / Supports .ply .splat .spz .ksplat",
+    "info.navigation.label": "Navigation",
+    "info.navigation.value": "Left drag rotate / Right drag pan / Wheel dolly / Arrow keys look / R+Left drag orbit",
+    "info.shot.label": "Shots",
+    "info.shot.value": "Double-click to set pivot / Preview shot points in planner / + insert / Del delete / C clear / P play",
+    "info.edit.label": "Edit",
+    "info.edit.value": "E toggle / 1 Picker / 2 Brush / Esc clear / Del delete / Ctrl+Z/Y undo redo",
+    "empty.title": "Load a 3DGS Model to Start",
+    "empty.openFile": "Open Local File",
+    "empty.meta": "Supported formats: .ply / .splat / .spz / .ksplat",
+    "drag.title": "Drop the Model Here",
+    "drag.subtitle": "Release to load the local 3DGS file immediately",
+    "model.title": "Model Loader",
+    "model.openFile": "Open File",
+    "model.currentStatus": "Current Status:",
+    "model.currentModel": "Current Model:",
+    "model.notLoaded": "Not loaded",
+    "model.status.loading": "Loading",
+    "model.status.loaded": "Loaded",
+    "model.status.error": "Load failed",
+    "model.status.waiting": "Waiting for upload",
+    "model.empty.loading": "Loading {name}. Please wait.",
+    "model.empty.retry": "{error} Click the button to choose again, or drag another model file into the page.",
+    "model.empty.default": "No model loaded. Choose a local file or drag a 3DGS file into the page.",
+    "model.error.unsupportedFormat": "Unsupported model format: {name}",
+    "model.error.loadFailed": "Failed to load model: {message}",
+    "shot.title": "Shot Planner",
+    "shot.insert": "Insert (+)",
+    "shot.delete": "Delete (Del)",
+    "shot.clear": "Clear (C)",
+    "shot.current": "Current Shot:",
+    "shot.count": "Shot Points:",
+    "shot.mode.browse": "Browse",
+    "shot.mode.edit": "Editing",
+    "shot.mode.planner": "Shot Planner",
+    "shot.mode.badge": "Current Mode: {mode}",
+    "shot.toggle.enter": "Enter Planner",
+    "shot.toggle.exit": "Exit Planner",
+    "shot.kfCount": "Shot Points: {count}",
+    "shot.noneSelected": "None",
+    "shot.pivotLabel": "Pivot",
+    "shot.hint.loading": "Model loading. Shot planning is temporarily unavailable.",
+    "shot.hint.noModel": "Upload and load a model first.",
+    "shot.hint.noPivot": "Double-click the model to set a fixed pivot.",
+    "shot.hint.noPoints": "No shot points yet. Press + to insert from the current view. Playback/export requires at least 2 points.",
+    "shot.hint.previewReady": "Click a shot point to preview it, or click empty space to clear the selection. + insert, Del delete, P preview.",
+    "shot.hint.previewOnePoint": "Click a shot point to preview it. + insert. Playback/export requires at least 2 points.",
+    "shot.hint.browse": "Enter planner mode to preview shot points; double-click to reset the pivot.",
+    "edit.title": "Splat Editing",
+    "edit.resetView": "Reset View",
+    "edit.toolPicker": "Picker (1)",
+    "edit.toolBrush": "Brush (2)",
+    "edit.currentTool": "Active Tool:",
+    "edit.selected": "Selected:",
+    "edit.deleted": "Deleted:",
+    "edit.clearSelection": "Clear Selection (Esc)",
+    "edit.undo": "Undo (Ctrl+Z)",
+    "edit.redo": "Redo (Ctrl+Y)",
+    "edit.deleteSelection": "Delete Selected (Del)",
+    "edit.enter": "Enter Edit (E)",
+    "edit.exit": "Exit Edit (E)",
+    "edit.radius": "Brush Radius (px)",
+    "edit.save": "Save .ply (Ctrl+S)",
+    "edit.saving": "Saving...",
+    "edit.hint.loading": "Model loading. Editing is temporarily unavailable.",
+    "edit.hint.noModel": "Upload and load a model first.",
+    "edit.hint.plannerActive": "Shot planner is active. Press E to return to editing.",
+    "edit.hint.enter": "Press E to enter edit mode. Left click selects, right drag and wheel navigate.",
+    "edit.hint.picker": "Click to pick, drag to box-select. Shift adds, Ctrl/Cmd subtracts.",
+    "edit.hint.brush": "Left drag to brush-select. [ / ] changes radius. Shift adds, Ctrl/Cmd subtracts.",
+    "tool.picker": "Picker",
+    "tool.brush": "Brush",
+    "play.status.stopped": "Paused",
+    "play.status.pathUpdated": "Path updated",
+    "play.status.needsTwoShots": "At least 2 shot points are required",
+    "play.status.playing": "Playing...",
+    "play.status.finished": "Playback finished",
+    "play.status.progress": "Playing {percent}%",
+    "save.error.noVisibleSplats": "No visible splats to save",
+    "save.status.noVisibleSplats": "No visible splats to save.",
+    "save.status.saving": "Saving... ({count} splats)",
+    "save.status.saved": "Saved {count} splats.",
+    "save.status.failed": "Save failed: {message}"
+  },
+  "zh-CN": {
+    "export.title": "导出视频",
+    "export.resolution": "分辨率",
+    "export.fps": "帧率 (FPS)",
+    "export.duration": "总时长 (秒)",
+    "export.bitrate": "码率 (Mbps)",
+    "export.button": "导出 MP4 视频",
+    "export.frameInfo": "总帧数: {frames} | 画幅: {width}x{height}",
+    "export.status.needTwo": "请先创建至少 2 个镜头点",
+    "export.status.unsupportedWebCodecs": "浏览器不支持 WebCodecs，请使用 Chrome 或 Edge",
+    "export.status.loadingEncoder": "加载编码器...",
+    "export.status.loadingMuxerFailed": "加载 mp4-muxer 失败: {message}",
+    "export.status.encoderError": "编码错误: {message}",
+    "export.status.rendering": "渲染中... {current}/{total} ({percent}%)",
+    "export.status.compositing": "正在合成视频...",
+    "export.status.done": "导出完成：{sizeMb} MB，共 {totalFrames} 帧",
+    "export.status.failed": "导出失败: {message}",
+    "export.error.canvasContext": "无法创建导出画布上下文",
+    "info.title": "快捷操作",
+    "info.model.label": "模型",
+    "info.model.value": "打开文件 / 拖拽加载 / 支持 .ply .splat .spz .ksplat",
+    "info.navigation.label": "导航",
+    "info.navigation.value": "左拖旋转 / 右拖平移 / 滚轮缩放 / 方向键转向 / R+左拖环绕",
+    "info.shot.label": "镜头",
+    "info.shot.value": "双击设中心 / 规划模式点位预览 / + 插点 / Del 删点 / C 清空 / P 播放",
+    "info.edit.label": "编辑",
+    "info.edit.value": "E 切换 / 1 点选 / 2 刷选 / Esc 清选 / Del 删除 / Ctrl+Z/Y 撤销重做",
+    "empty.title": "上传一个 3DGS 模型开始",
+    "empty.openFile": "打开本地文件",
+    "empty.meta": "支持格式：.ply / .splat / .spz / .ksplat",
+    "drag.title": "拖拽模型到这里",
+    "drag.subtitle": "松开鼠标后立即加载本地 3DGS 文件",
+    "model.title": "模型加载",
+    "model.openFile": "打开文件",
+    "model.currentStatus": "当前状态:",
+    "model.currentModel": "当前模型:",
+    "model.notLoaded": "未加载",
+    "model.status.loading": "加载中",
+    "model.status.loaded": "已加载",
+    "model.status.error": "加载失败",
+    "model.status.waiting": "等待上传",
+    "model.empty.loading": "正在加载 {name}，请稍候。",
+    "model.empty.retry": "{error} 点击按钮重新选择，或直接拖拽新的模型文件到页面。",
+    "model.empty.default": "当前未加载模型。点击按钮选择本地文件，或直接把 3DGS 文件拖到页面中。",
+    "model.error.unsupportedFormat": "不支持的模型格式: {name}",
+    "model.error.loadFailed": "加载模型失败: {message}",
+    "shot.title": "镜头规划",
+    "shot.insert": "插点 (+)",
+    "shot.delete": "删点 (Del)",
+    "shot.clear": "清空 (C)",
+    "shot.current": "当前镜头点:",
+    "shot.count": "镜头点数量:",
+    "shot.mode.browse": "浏览",
+    "shot.mode.edit": "删除编辑",
+    "shot.mode.planner": "镜头规划",
+    "shot.mode.badge": "当前模式: {mode}",
+    "shot.toggle.enter": "进入规划",
+    "shot.toggle.exit": "退出规划",
+    "shot.kfCount": "镜头点: {count}",
+    "shot.noneSelected": "未选中",
+    "shot.pivotLabel": "中心",
+    "shot.hint.loading": "模型加载中，镜头规划暂不可用。",
+    "shot.hint.noModel": "请先上传并加载一个模型。",
+    "shot.hint.noPivot": "双击模型设置固定镜头中心点。",
+    "shot.hint.noPoints": "当前无镜头点，按 + 从当前机位插点。少于 2 个点时无法播放或导出。",
+    "shot.hint.previewReady": "点镜头点预览，点空白取消。+ 插点，Del 删点，P 预览。",
+    "shot.hint.previewOnePoint": "点镜头点预览，+ 插点。少于 2 个点时无法播放或导出。",
+    "shot.hint.browse": "进入规划后点镜头点预览；双击重设中心。",
+    "edit.title": "编辑删除",
+    "edit.resetView": "重置视角",
+    "edit.toolPicker": "点选 (1)",
+    "edit.toolBrush": "刷选 (2)",
+    "edit.currentTool": "当前工具:",
+    "edit.selected": "已选择:",
+    "edit.deleted": "已删除:",
+    "edit.clearSelection": "清空选择 (Esc)",
+    "edit.undo": "撤销 (Ctrl+Z)",
+    "edit.redo": "重做 (Ctrl+Y)",
+    "edit.deleteSelection": "删除所选 (Del)",
+    "edit.enter": "进入编辑 (E)",
+    "edit.exit": "退出编辑 (E)",
+    "edit.radius": "画笔半径 (px)",
+    "edit.save": "保存 .ply (Ctrl+S)",
+    "edit.saving": "保存中...",
+    "edit.hint.loading": "模型加载中，删除编辑暂不可用。",
+    "edit.hint.noModel": "请先上传并加载一个模型。",
+    "edit.hint.plannerActive": "镜头规划开启中，按 E 可切回删除编辑。",
+    "edit.hint.enter": "按 E 进入编辑。左键选择，右键拖拽与滚轮导航。",
+    "edit.hint.picker": "单击选点，拖拽框选。Shift 加选，Ctrl/Cmd 减选。",
+    "edit.hint.brush": "左键刷选，[ / ] 调半径。Shift 加选，Ctrl/Cmd 减选。",
+    "tool.picker": "点选",
+    "tool.brush": "刷选",
+    "play.status.stopped": "已停止",
+    "play.status.pathUpdated": "路径已更新",
+    "play.status.needsTwoShots": "至少需要 2 个镜头点",
+    "play.status.playing": "播放中...",
+    "play.status.finished": "播放完成",
+    "play.status.progress": "播放 {percent}%",
+    "save.error.noVisibleSplats": "没有可保存的 splats",
+    "save.status.noVisibleSplats": "没有可保存的 splats。",
+    "save.status.saving": "正在保存... ({count} splats)",
+    "save.status.saved": "已保存 {count} 个 splats。",
+    "save.status.failed": "保存失败: {message}"
+  }
+};
+
+function isSupportedLanguage(language) {
+  return Object.prototype.hasOwnProperty.call(I18N, language);
+}
+
+function getStoredLanguage() {
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return isSupportedLanguage(stored) ? stored : DEFAULT_LANGUAGE;
+  } catch (_error) {
+    return DEFAULT_LANGUAGE;
+  }
+}
+
+let currentLanguage = getStoredLanguage();
 
 const controls = new SparkControls({ canvas: renderer.domElement });
 controls.pointerControls.enable = false;
@@ -205,15 +436,99 @@ const keyboardLookState = {
 const modelState = {
   ready: false,
   loading: false,
-  activeName: "未加载",
+  activeName: "",
   pendingName: "",
-  error: "",
+  errorKey: "",
+  errorParams: {},
   requestToken: 0,
   dragDepth: 0,
   dragActive: false
 };
 
 let splats = null;
+const uiMessageState = {
+  playStatus: { key: "", params: {} },
+  saveStatus: { key: "", params: {} },
+  exportStatus: { key: "", params: {} }
+};
+
+function t(key, params = {}) {
+  const dictionary = I18N[currentLanguage] ?? I18N[DEFAULT_LANGUAGE];
+  const fallbackDictionary = I18N[DEFAULT_LANGUAGE];
+  const template = dictionary[key] ?? fallbackDictionary[key] ?? key;
+  return template.replace(/\{(\w+)\}/g, (_match, name) => String(params[name] ?? ""));
+}
+
+function setUiMessage(slot, key = "", params = {}) {
+  uiMessageState[slot] = { key, params };
+  renderUiMessage(slot);
+}
+
+function renderUiMessage(slot) {
+  const state = uiMessageState[slot];
+  const text = state.key ? t(state.key, state.params) : "";
+
+  if (slot === "playStatus") {
+    playStatusEl.textContent = text;
+  } else if (slot === "saveStatus") {
+    saveStatusEl.textContent = text;
+  } else if (slot === "exportStatus") {
+    exportStatusEl.textContent = text;
+  }
+}
+
+function renderAllUiMessages() {
+  renderUiMessage("playStatus");
+  renderUiMessage("saveStatus");
+  renderUiMessage("exportStatus");
+}
+
+function updateLanguageButtons() {
+  for (const button of languageButtons) {
+    const active = button.dataset.language === currentLanguage;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function applyStaticTranslations() {
+  for (const element of translatableElements) {
+    element.textContent = t(element.dataset.i18n);
+  }
+  document.documentElement.lang = currentLanguage;
+  updateLanguageButtons();
+}
+
+function getModelErrorText() {
+  return modelState.errorKey ? t(modelState.errorKey, modelState.errorParams) : "";
+}
+
+function renderLocalizedUi() {
+  applyStaticTranslations();
+  updateShotPivotMarkerLabel();
+  updateFrameInfo();
+  updateModelUi();
+  updateEditUi();
+  updateShotUi();
+  renderAllUiMessages();
+}
+
+function setLanguage(language, { persist = true } = {}) {
+  if (!isSupportedLanguage(language)) {
+    return;
+  }
+
+  currentLanguage = language;
+  if (persist) {
+    try {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch (_error) {
+      // Ignore storage failures and keep the current in-memory language.
+    }
+  }
+
+  renderLocalizedUi();
+}
 
 function isInputFocused() {
   const active = document.activeElement;
@@ -266,7 +581,7 @@ function clearEditState() {
   editState.projectionY = null;
   editState.projectionDepth = null;
   editState.projectionVisible = null;
-  saveStatusEl.textContent = "";
+  setUiMessage("saveStatus");
 }
 
 function clearShotState() {
@@ -284,7 +599,7 @@ function clearShotState() {
 }
 
 function resetModelBoundState() {
-  stopPlayback("");
+  stopPlayback();
   hasOrbitTarget = false;
   orbitTransition = 0;
   endPointerAction();
@@ -300,25 +615,28 @@ function setDragOverlayActive(active) {
 
 function updateModelUi() {
   const hasModel = modelState.ready && !!splats;
-  const visibleName = modelState.loading && modelState.pendingName ? modelState.pendingName : modelState.activeName;
+  const visibleName = modelState.loading && modelState.pendingName
+    ? modelState.pendingName
+    : (modelState.activeName || t("model.notLoaded"));
+  const modelErrorText = getModelErrorText();
 
   openModelBtn.disabled = isModelInteractionBlocked();
   emptyStateOpenBtn.disabled = isModelInteractionBlocked();
 
   if (modelState.loading) {
-    modelStatusLabelEl.textContent = "加载中";
+    modelStatusLabelEl.textContent = t("model.status.loading");
   } else if (hasModel) {
-    modelStatusLabelEl.textContent = "已加载";
-  } else if (modelState.error) {
-    modelStatusLabelEl.textContent = "加载失败";
+    modelStatusLabelEl.textContent = t("model.status.loaded");
+  } else if (modelErrorText) {
+    modelStatusLabelEl.textContent = t("model.status.error");
   } else {
-    modelStatusLabelEl.textContent = "等待上传";
+    modelStatusLabelEl.textContent = t("model.status.waiting");
   }
 
   modelNameLabelEl.textContent = visibleName;
 
-  if (modelState.error) {
-    modelHintEl.textContent = modelState.error;
+  if (modelErrorText) {
+    modelHintEl.textContent = modelErrorText;
   } else {
     modelHintEl.textContent = "";
   }
@@ -326,21 +644,22 @@ function updateModelUi() {
   emptyStateEl.hidden = hasModel;
   if (!hasModel) {
     if (modelState.loading) {
-      emptyStateTextEl.textContent = `正在加载 ${modelState.pendingName}，请稍候。`;
-    } else if (modelState.error) {
-      emptyStateTextEl.textContent = `${modelState.error} 点击按钮重新选择，或直接拖拽新的模型文件到页面。`;
+      emptyStateTextEl.textContent = t("model.empty.loading", { name: modelState.pendingName });
+    } else if (modelErrorText) {
+      emptyStateTextEl.textContent = t("model.empty.retry", { error: modelErrorText });
     } else {
-      emptyStateTextEl.textContent = "当前未加载模型。点击按钮选择本地文件，或直接把 3DGS 文件拖到页面中。";
+      emptyStateTextEl.textContent = t("model.empty.default");
     }
   }
 
   dragOverlayEl.classList.toggle("active", modelState.dragActive && !exporting);
 }
 
-function setModelError(message) {
+function setModelError(key, params = {}) {
   modelState.loading = false;
   modelState.pendingName = "";
-  modelState.error = message;
+  modelState.errorKey = key;
+  modelState.errorParams = params;
   updateModelUi();
   updateEditUi();
   updateShotUi();
@@ -361,7 +680,8 @@ function applyLoadedModel(mesh, name) {
   modelState.loading = false;
   modelState.pendingName = "";
   modelState.activeName = name;
-  modelState.error = "";
+  modelState.errorKey = "";
+  modelState.errorParams = {};
 
   updateModelUi();
   updateEditUi();
@@ -373,19 +693,20 @@ async function loadModelFromFile(file) {
     return;
   }
   if (!isSupportedModelFileName(file.name)) {
-    setModelError(`不支持的模型格式: ${file.name}`);
+    setModelError("model.error.unsupportedFormat", { name: file.name });
     return;
   }
 
   if (playing) {
-    stopPlayback("⏸ 已停止");
+    stopPlayback("play.status.stopped");
   }
 
   const requestToken = modelState.requestToken + 1;
   modelState.requestToken = requestToken;
   modelState.loading = true;
   modelState.pendingName = file.name;
-  modelState.error = "";
+  modelState.errorKey = "";
+  modelState.errorParams = {};
   updateModelUi();
   updateEditUi();
   updateShotUi();
@@ -406,7 +727,7 @@ async function loadModelFromFile(file) {
     if (requestToken !== modelState.requestToken) {
       return;
     }
-    setModelError(`加载模型失败: ${error.message}`);
+    setModelError("model.error.loadFailed", { message: error.message });
     return;
   }
 
@@ -452,8 +773,8 @@ function getSelectionMode(event) {
 }
 
 function toolLabel(tool) {
-  if (tool === "brush") return "Brush";
-  return "Picker";
+  if (tool === "brush") return t("tool.brush");
+  return t("tool.picker");
 }
 
 function normalizeAngle(angle) {
@@ -516,7 +837,7 @@ function createLabelSprite(
   ctx.strokeStyle = border;
   ctx.stroke();
   ctx.fillStyle = color;
-  ctx.font = `700 ${fontSize}px monospace`;
+  ctx.font = `700 ${fontSize}px ${UI_CANVAS_FONT_FAMILY}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, width * 0.5, height * 0.56);
@@ -562,7 +883,7 @@ function createShotPivotMarker() {
   const cross = new THREE.LineSegments(crossGeometry, createLineMaterial(SHOT_PIVOT_COLOR));
   cross.renderOrder = 1100;
 
-  const label = createLabelSprite("Pivot", {
+  const label = createLabelSprite(t("shot.pivotLabel"), {
     background: "rgba(11, 35, 42, 0.92)",
     border: "#58f0ff",
     color: "#dffcff",
@@ -576,6 +897,25 @@ function createShotPivotMarker() {
   group.add(ring, cross, label);
   group.visible = false;
   return { group, label };
+}
+
+function updateShotPivotMarkerLabel() {
+  const position = shotPivotMarker.label.position.clone();
+  const scale = shotPivotMarker.label.scale.clone();
+  shotPivotMarker.group.remove(shotPivotMarker.label);
+  disposeSprite(shotPivotMarker.label);
+
+  shotPivotMarker.label = createLabelSprite(t("shot.pivotLabel"), {
+    background: "rgba(11, 35, 42, 0.92)",
+    border: "#58f0ff",
+    color: "#dffcff",
+    width: 300,
+    height: 120,
+    fontSize: 42
+  });
+  shotPivotMarker.label.position.copy(position);
+  shotPivotMarker.label.scale.copy(scale);
+  shotPivotMarker.group.add(shotPivotMarker.label);
 }
 
 function createShotFrustumGeometry() {
@@ -1067,12 +1407,12 @@ function getPlaybackQuaternionAt(t, position, target = new THREE.Quaternion()) {
   return target.copy(keyframes[index].quaternion).slerp(keyframes[index + 1].quaternion, localT);
 }
 
-function stopPlayback(statusText = "") {
+function stopPlayback(statusKey = "", params = {}) {
   playing = false;
   playT = 0;
   playLastTime = 0;
   setPlaybackPreviewAspectLocked(false);
-  playStatusEl.textContent = statusText;
+  setUiMessage("playStatus", statusKey, params);
 }
 
 function updateShotLabelVisual(visual, labelText, selected) {
@@ -1257,7 +1597,7 @@ function selectShotPoint(index, { preview = true } = {}) {
 
 function syncShotPlanner({ previewSelection = false } = {}) {
   if (playing) {
-    stopPlayback("⏸ 路径已更新");
+    stopPlayback("play.status.pathUpdated");
   }
 
   shotState.hoverIndex = -1;
@@ -1275,7 +1615,7 @@ function syncShotPlanner({ previewSelection = false } = {}) {
     previewShotPoint(shotState.selectedIndex);
   }
   if (!shotState.points.length) {
-    playStatusEl.textContent = "";
+    setUiMessage("playStatus");
   }
   updateShotUi();
 }
@@ -1388,39 +1728,43 @@ function clearShotPoints() {
 function updateShotUi() {
   const hasModel = editState.ready;
   const hasSelection = shotState.selectedIndex >= 0 && shotState.selectedIndex < shotState.points.length;
-  const plannerLabel = shotState.plannerMode ? "镜头规划" : editState.editMode ? "删除编辑" : "浏览";
+  const plannerLabel = shotState.plannerMode
+    ? t("shot.mode.planner")
+    : editState.editMode
+      ? t("shot.mode.edit")
+      : t("shot.mode.browse");
   const canInsert = hasModel && hasShotPivot;
   const blocked = isModelInteractionBlocked();
 
   shotPanelEl.classList.toggle("active", shotState.plannerMode);
-  shotModeBadgeEl.textContent = `当前模式: ${plannerLabel}`;
-  togglePlannerBtn.textContent = shotState.plannerMode ? "退出规划" : "进入规划";
+  shotModeBadgeEl.textContent = t("shot.mode.badge", { mode: plannerLabel });
+  togglePlannerBtn.textContent = shotState.plannerMode ? t("shot.toggle.exit") : t("shot.toggle.enter");
   togglePlannerBtn.classList.toggle("active", shotState.plannerMode);
   togglePlannerBtn.disabled = !hasModel || blocked;
   insertShotBtn.disabled = !canInsert || blocked;
   deleteShotBtn.disabled = !hasSelection || blocked;
   clearShotsBtn.disabled = shotState.points.length === 0 || blocked;
 
-  kfCountEl.textContent = `镜头点: ${shotState.points.length}`;
+  kfCountEl.textContent = t("shot.kfCount", { count: shotState.points.length });
   shotPointCountEl.textContent = String(shotState.points.length);
-  selectedShotLabelEl.textContent = hasSelection ? `#${shotState.selectedIndex + 1}` : "未选中";
+  selectedShotLabelEl.textContent = hasSelection ? `#${shotState.selectedIndex + 1}` : t("shot.noneSelected");
 
   if (modelState.loading) {
-    shotHintEl.textContent = "模型加载中，镜头规划暂不可用。";
+    shotHintEl.textContent = t("shot.hint.loading");
   } else if (!hasModel) {
-    shotHintEl.textContent = "请先上传并加载一个模型。";
+    shotHintEl.textContent = t("shot.hint.noModel");
   } else if (!hasShotPivot) {
-    shotHintEl.textContent = "双击模型设置固定镜头中心点。";
+    shotHintEl.textContent = t("shot.hint.noPivot");
   } else if (shotState.plannerMode) {
     if (shotState.points.length === 0) {
-      shotHintEl.textContent = "当前无镜头点，按 + 从当前机位插点。少于 2 个点时无法播放或导出。";
+      shotHintEl.textContent = t("shot.hint.noPoints");
     } else if (shotState.points.length >= 2) {
-      shotHintEl.textContent = "点镜头点预览，点空白取消。+ 插点，Del 删点，P 预览。";
+      shotHintEl.textContent = t("shot.hint.previewReady");
     } else {
-      shotHintEl.textContent = "点镜头点预览，+ 插点。少于 2 个点时无法播放或导出。";
+      shotHintEl.textContent = t("shot.hint.previewOnePoint");
     }
   } else {
-    shotHintEl.textContent = "进入规划后点镜头点预览；双击重设中心。";
+    shotHintEl.textContent = t("shot.hint.browse");
   }
 
   exportBtn.disabled = blocked || shotState.points.length < 2;
@@ -1553,7 +1897,7 @@ function downloadBytes(filename, bytes, mimeType) {
 function buildVisiblePlyBytes() {
   const visibleCount = getVisibleSplatCount();
   if (visibleCount === 0) {
-    throw new Error("没有可保存的 splats");
+    throw new Error(t("save.error.noVisibleSplats"));
   }
 
   const header = [
@@ -1639,12 +1983,12 @@ async function saveEditedScene() {
 
   const visibleCount = getVisibleSplatCount();
   if (visibleCount === 0) {
-    saveStatusEl.textContent = "没有可保存的 splats。";
+    setUiMessage("saveStatus", "save.status.noVisibleSplats");
     return;
   }
 
   editState.savingScene = true;
-  saveStatusEl.textContent = `正在保存... (${visibleCount} splats)`;
+  setUiMessage("saveStatus", "save.status.saving", { count: visibleCount });
   updateEditUi();
 
   try {
@@ -1652,10 +1996,10 @@ async function saveEditedScene() {
     const plyBytes = buildVisiblePlyBytes();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     downloadBytes(`edited_scene_${timestamp}.ply`, plyBytes, "application/octet-stream");
-    saveStatusEl.textContent = `已保存 ${visibleCount} 个 splats。`;
+    setUiMessage("saveStatus", "save.status.saved", { count: visibleCount });
   } catch (error) {
-    console.error("保存场景失败:", error);
-    saveStatusEl.textContent = `保存失败: ${error.message}`;
+    console.error("Failed to save scene:", error);
+    setUiMessage("saveStatus", "save.status.failed", { message: error.message });
   } finally {
     editState.savingScene = false;
     updateEditUi();
@@ -1663,7 +2007,7 @@ async function saveEditedScene() {
 }
 
 function updateEditUi() {
-  toggleEditBtn.textContent = editState.editMode ? "退出编辑 (E)" : "进入编辑 (E)";
+  toggleEditBtn.textContent = editState.editMode ? t("edit.exit") : t("edit.enter");
   activeToolLabelEl.textContent = toolLabel(editState.activeTool);
   selectionCountEl.textContent = String(editState.selectedCount);
   deletedCountEl.textContent = String(editState.hiddenCount);
@@ -1672,12 +2016,12 @@ function updateEditUi() {
   const hasVisibleSplats = hasModel && editState.hiddenCount < editState.numSplats;
   const usingRadius = editState.activeTool === "brush";
   const blocked = isModelInteractionBlocked();
-  radiusLabelEl.textContent = "画笔半径 (px)";
+  radiusLabelEl.textContent = t("edit.radius");
   toggleEditBtn.disabled = !hasModel || blocked;
   radiusInput.disabled = !hasModel || !usingRadius || blocked;
   resetViewBtn.disabled = !hasVisibleSplats || blocked;
   saveSceneBtn.disabled = !hasVisibleSplats || editState.savingScene || blocked;
-  saveSceneBtn.textContent = editState.savingScene ? "保存中..." : "保存 .ply (Ctrl+S)";
+  saveSceneBtn.textContent = editState.savingScene ? t("edit.saving") : t("edit.save");
 
   radiusInput.min = "1";
   radiusInput.step = "1";
@@ -1695,17 +2039,17 @@ function updateEditUi() {
   deleteSelectionBtn.disabled = !hasModel || editState.selectedCount === 0 || blocked;
 
   if (modelState.loading) {
-    editHintEl.textContent = "模型加载中，删除编辑暂不可用。";
+    editHintEl.textContent = t("edit.hint.loading");
   } else if (!hasModel) {
-    editHintEl.textContent = "请先上传并加载一个模型。";
+    editHintEl.textContent = t("edit.hint.noModel");
   } else if (shotState.plannerMode) {
-    editHintEl.textContent = "镜头规划开启中，按 E 可切回删除编辑。";
+    editHintEl.textContent = t("edit.hint.plannerActive");
   } else if (!editState.editMode) {
-    editHintEl.textContent = "按 E 进入编辑。左键选择，右键/滚轮导航。";
+    editHintEl.textContent = t("edit.hint.enter");
   } else if (editState.activeTool === "picker") {
-    editHintEl.textContent = "单击选点，拖拽框选。Shift 加选，Ctrl/Cmd 减选。";
+    editHintEl.textContent = t("edit.hint.picker");
   } else {
-    editHintEl.textContent = "左键刷选，[ / ] 调半径。Shift 加选，Ctrl/Cmd 减选。";
+    editHintEl.textContent = t("edit.hint.brush");
   }
 }
 
@@ -2470,7 +2814,7 @@ function drawViewGizmo() {
 
     if (node.label) {
       viewGizmoCtx.fillStyle = "#101418";
-      viewGizmoCtx.font = "700 16px monospace";
+      viewGizmoCtx.font = `700 16px ${UI_CANVAS_FONT_FAMILY}`;
       viewGizmoCtx.textAlign = "center";
       viewGizmoCtx.textBaseline = "middle";
       viewGizmoCtx.fillText(node.label, node.x, node.y + 1);
@@ -2701,7 +3045,11 @@ function updateFrameInfo() {
   const fps = parseInt(fpsInput.value, 10) || 30;
   const duration = parseFloat(durationInput.value) || 5;
   const resolution = getSelectedOutputResolution();
-  exportFrameInfo.textContent = `总帧数: ${Math.round(fps * duration)} | 画幅: ${resolution.width}×${resolution.height}`;
+  exportFrameInfo.textContent = t("export.frameInfo", {
+    frames: Math.round(fps * duration),
+    width: resolution.width,
+    height: resolution.height
+  });
 
   if (playbackPreviewLockedAspect && !exporting) {
     setPlaybackPreviewAspectLocked(true);
@@ -2763,12 +3111,12 @@ function applyPlaybackFrame(t) {
 
 function togglePlay() {
   if (keyframes.length < 2 || !positionCurve) {
-    playStatusEl.textContent = "至少需要 2 个镜头点";
+    setUiMessage("playStatus", "play.status.needsTwoShots");
     return;
   }
 
   if (playing) {
-    stopPlayback("⏸ 已停止");
+    stopPlayback("play.status.stopped");
     return;
   }
 
@@ -2778,7 +3126,7 @@ function togglePlay() {
   playLastTime = performance.now();
   setPlaybackPreviewAspectLocked(true);
   applyPlaybackFrame(0);
-  playStatusEl.textContent = "▶ 播放中...";
+  setUiMessage("playStatus", "play.status.playing");
 }
 
 function updatePlayback(time) {
@@ -2796,12 +3144,12 @@ function updatePlayback(time) {
     playing = false;
     playLastTime = 0;
     setPlaybackPreviewAspectLocked(false);
-    playStatusEl.textContent = "✓ 播放完成";
+    setUiMessage("playStatus", "play.status.finished");
     return;
   }
 
   applyPlaybackFrame(playT);
-  playStatusEl.textContent = `▶ ${Math.round(playT * 100)}%`;
+  setUiMessage("playStatus", "play.status.progress", { percent: Math.round(playT * 100) });
 }
 
 function hideHelperOverlaysForExport() {
@@ -2831,18 +3179,18 @@ async function exportVideo() {
     return;
   }
   if (keyframes.length < 2 || !positionCurve) {
-    exportStatusEl.textContent = "请先创建至少 2 个镜头点";
+    setUiMessage("exportStatus", "export.status.needTwo");
     return;
   }
   if (typeof VideoEncoder === "undefined") {
-    exportStatusEl.textContent = "浏览器不支持 WebCodecs，请使用 Chrome/Edge";
+    setUiMessage("exportStatus", "export.status.unsupportedWebCodecs");
     return;
   }
 
   exporting = true;
   exportBtn.disabled = true;
   exportProgress.style.display = "block";
-  exportStatusEl.textContent = "加载编码器...";
+  setUiMessage("exportStatus", "export.status.loadingEncoder");
   updateModelUi();
   updateEditUi();
   updateShotUi();
@@ -2851,7 +3199,7 @@ async function exportVideo() {
   try {
     mp4Muxer = await import("https://esm.sh/mp4-muxer@5");
   } catch (error) {
-    exportStatusEl.textContent = `加载 mp4-muxer 失败: ${error.message}`;
+    setUiMessage("exportStatus", "export.status.loadingMuxerFailed", { message: error.message });
     exporting = false;
     updateModelUi();
     updateEditUi();
@@ -2877,7 +3225,7 @@ async function exportVideo() {
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (error) => {
-      exportStatusEl.textContent = `编码错误: ${error.message}`;
+      setUiMessage("exportStatus", "export.status.encoderError", { message: error.message });
     }
   });
   encoder.configure({
@@ -2889,7 +3237,7 @@ async function exportVideo() {
   });
 
   if (playing) {
-    stopPlayback("⏸ 已停止");
+    stopPlayback("play.status.stopped");
   }
 
   const originalAspect = camera.aspect;
@@ -2901,7 +3249,7 @@ async function exportVideo() {
 
   try {
     hideHelperOverlaysForExport();
-    exportStatusEl.textContent = `渲染中... 0/${totalFrames}`;
+    setUiMessage("exportStatus", "export.status.rendering", { current: 0, total: totalFrames, percent: 0 });
     exportProgressBar.style.width = "0%";
 
     camera.aspect = resolution.width / resolution.height;
@@ -2960,7 +3308,7 @@ async function exportVideo() {
     exportCanvas.height = resolution.height;
     const exportContext = exportCanvas.getContext("2d", { alpha: false });
     if (!exportContext) {
-      throw new Error("无法创建导出画布上下文");
+      throw new Error(t("export.error.canvasContext"));
     }
     const exportImageData = exportContext.createImageData(resolution.width, resolution.height);
 
@@ -2981,12 +3329,16 @@ async function exportVideo() {
 
       const percent = Math.round(((frameIndex + 1) / totalFrames) * 100);
       exportProgressBar.style.width = `${percent}%`;
-      exportStatusEl.textContent = `渲染中... ${frameIndex + 1}/${totalFrames} (${percent}%)`;
+      setUiMessage("exportStatus", "export.status.rendering", {
+        current: frameIndex + 1,
+        total: totalFrames,
+        percent
+      });
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    exportStatusEl.textContent = "正在合成视频...";
+    setUiMessage("exportStatus", "export.status.compositing");
     await encoder.flush();
     encoder.close();
     muxer.finalize();
@@ -3002,14 +3354,14 @@ async function exportVideo() {
     URL.revokeObjectURL(url);
 
     const sizeMb = (mp4Blob.size / 1048576).toFixed(1);
-    exportStatusEl.textContent = `✓ 导出完成！${sizeMb} MB, 共 ${totalFrames} 帧`;
+    setUiMessage("exportStatus", "export.status.done", { sizeMb, totalFrames });
   } catch (error) {
     try {
       encoder.close();
     } catch (_closeError) {
       // Ignore encoder close failures when export aborts early.
     }
-    exportStatusEl.textContent = `导出失败: ${error.message}`;
+    setUiMessage("exportStatus", "export.status.failed", { message: error.message });
   } finally {
     if (exportSpark) {
       exportSpark.dispose();
@@ -3243,6 +3595,11 @@ fpsInput.addEventListener("input", updateFrameInfo);
 durationInput.addEventListener("input", updateFrameInfo);
 resSelect.addEventListener("change", updateFrameInfo);
 exportBtn.addEventListener("click", exportVideo);
+for (const button of languageButtons) {
+  button.addEventListener("click", () => {
+    setLanguage(button.dataset.language);
+  });
+}
 viewGizmoEl.addEventListener("click", (event) => {
   const hit = findViewGizmoAxisHit(event);
   if (!hit) {
@@ -3341,10 +3698,7 @@ window.addEventListener("blur", () => {
   setDragOverlayActive(false);
 });
 
-updateFrameInfo();
-updateModelUi();
-updateEditUi();
-updateShotUi();
+setLanguage(currentLanguage, { persist: false });
 resizeViewGizmoCanvas();
 
 renderer.setAnimationLoop((time) => {

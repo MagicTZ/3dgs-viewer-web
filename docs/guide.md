@@ -1,219 +1,225 @@
-# 使用指南
+# User Guide
 
-本文档集中说明本项目的启动方式、交互操作、镜头规划逻辑、删除编辑流程与视频导出说明。顶层 `README.md` 负责项目概览与快速上手，这里则保留完整使用手册。
+English | [简体中文](./guide.zh-CN.md)
 
-## 1. 项目概览
+This guide covers startup, interaction, shot planning, splat cleanup, and MP4 export. The top-level `README.md` is kept short for project overview and quick start, while this file keeps the full operating notes.
 
-`3DGS Viewer` 是一个基于 `Spark.js` 和 `Three.js` 的浏览器端 3D Gaussian Splatting 查看与轻编辑工具，当前版本主要聚焦于两条主线：
+## 1. Overview
 
-- 固定中心点的镜头规划与 MP4 导出
-- 浏览器内的 splat 删除编辑与 `.ply` 保存
+`3DGS Viewer` is a browser-based 3D Gaussian Splatting viewer and light editor built on top of `Spark.js` and `Three.js`. The current version focuses on two main workflows:
 
-这版已经不是“手动拖相机再记关键帧”的旧流程，而是镜头点规划版本：
+- Pivot-centered shot planning with MP4 export
+- In-browser splat deletion editing with `.ply` save
 
-- 双击模型设置固定镜头中心 `Pivot`
-- 用离散镜头点规划路径
-- 所有镜头点和中间采样帧始终朝向 `Pivot`
-- `P` 预览和导出视频走同一套路径采样逻辑
+The project no longer follows a manual "drag camera and record keyframes" workflow. The current planner is built around shot points:
 
-## 2. 环境要求与启动
+- Double-click the model to set a fixed `Pivot`
+- Plan the path with discrete shot points
+- Keep every shot point and interpolated frame looking at the `Pivot`
+- Use the same sampling logic for `P` preview and MP4 export
 
-### 环境要求
+## 2. Requirements and Startup
 
-- Chrome / Edge，且浏览器支持 `WebCodecs`
-- 通过 HTTP 服务器访问，不能直接双击 `index.html`
+### Requirements
 
-### 目录示例
+- Chrome or Edge with `WebCodecs` support
+- Access the project through an HTTP server instead of opening `index.html` directly
+
+### Example Layout
 
 ```text
 3dgs-viewer-web/
+├── assets/
+│   └── demo-zh-CN.gif
 ├── docs/
 │   ├── guide.md
+│   ├── guide.zh-CN.md
 │   └── images/
 ├── index.html
 ├── viewer.js
 ├── README.md
+├── README.zh-CN.md
 └── LICENSE
 ```
 
-### 启动方式
+### Start the App
 
 ```bash
 python -m http.server 8080
 ```
 
-访问地址：
+Open:
 
 ```text
 http://localhost:8080
 ```
 
-## 3. 推荐使用流程
+## 3. Recommended Workflow
 
-### 3.1 上传模型
+### 3.1 Load a Model
 
-- 页面初始进入是空态，不会自动加载仓库中的固定模型
-- 点击左侧 `打开文件` 或中心空态按钮，选择本地 3DGS 文件
-- 也可以直接把模型文件拖到页面中
-- 支持格式：`.ply` / `.splat` / `.spz` / `.ksplat`
+- The page starts in an empty state and does not auto-load a bundled scene
+- Click `Open File` in the left panel or the center empty-state button to choose a local 3DGS file
+- You can also drag the model file directly into the page
+- Supported formats: `.ply` / `.splat` / `.spz` / `.ksplat`
 
-### 3.2 浏览场景
+### 3.2 Navigate the Scene
 
-- 左键拖拽旋转视角
-- 右键拖拽平移
-- 滚轮缩放
-- 方向键做视角转向
+- Left mouse drag: rotate
+- Right mouse drag: pan
+- Mouse wheel: dolly
+- Arrow keys: adjust view direction
 
-### 3.3 设置镜头中心
+### 3.3 Set the Pivot
 
-- 双击模型，设置固定镜头中心 `Pivot`
-- 设置后，镜头规划、路径预览、视频导出都围绕这个中心工作
-- 普通平移和缩放不会再改动 `Pivot`
+- Double-click the model to set the fixed shot `Pivot`
+- After that, shot planning, path preview, and export all work around this center
+- Regular panning and dollying do not move the `Pivot`
 
-### 3.4 进入镜头规划
+### 3.4 Enter Shot Planner Mode
 
-- 点击左上角 `进入规划`
-- 初始不会自动显示默认镜头点
-- 进入规划后，按 `+` 会从当前相机机位插入一个镜头点
+- Click `Enter Planner`
+- No default shot points are created automatically
+- In planner mode, press `+` to insert a shot point from the current camera pose
 
-### 3.5 组织镜头路径
+### 3.5 Organize the Camera Path
 
-- 点击镜头点可切到该点视角预览
-- `+`：在当前选中点后插入新点；未选中时追加到末尾
-- `Del`：删除当前镜头点
-- `C`：清空所有镜头点
-- `P`：按镜头点顺序预览整条路径
+- Click a shot point to preview that view
+- `+`: insert after the selected point, or append when nothing is selected
+- `Del`: delete the current shot point
+- `C`: clear all shot points
+- `P`: preview the full path in order
 
-注意：
+Notes:
 
-- 至少需要 `2` 个镜头点，才能播放和导出
-- 所有镜头点默认始终朝向中心点
-- 两个镜头点之间的中间采样帧也会持续 `lookAt(Pivot)`
+- Playback and export require at least `2` shot points
+- All shot points face the center by default
+- Interpolated frames between shot points also keep `lookAt(Pivot)`
 
-### 3.6 导出视频
+### 3.6 Export Video
 
-- 右上角设置分辨率、FPS、总时长、码率
-- 点击 `导出 MP4 视频`
-- 导出使用离屏渲染路径，和预览共享同一套路径采样逻辑
+- Configure resolution, FPS, duration, and bitrate in the upper-right panel
+- Click `Export MP4`
+- Export uses an off-screen rendering path and shares the same shot sampling logic as preview
 
-## 4. 交互说明
+## 4. Interaction Reference
 
-### 4.1 导航
+### 4.1 Navigation
 
-| 操作 | 说明 |
+| Action | Result |
 | --- | --- |
-| 点击 `打开文件` | 选择本地 3DGS 模型 |
-| 拖拽文件到页面 | 加载本地 3DGS 模型 |
-| 左键拖拽 | 自由旋转视角 |
-| 右键拖拽 | 平移 |
-| 滚轮 | 缩放 |
-| 方向键 | 旋转 / 俯仰视角 |
-| `R` + 左键拖拽 | 围绕当前中心做环绕观察 |
-| 双击模型 | 设置或重设固定镜头中心 |
+| Click `Open File` | Choose a local 3DGS model |
+| Drag a file into the page | Load a local 3DGS model |
+| Left mouse drag | Rotate the camera |
+| Right mouse drag | Pan |
+| Mouse wheel | Dolly |
+| Arrow keys | Rotate / pitch the view |
+| `R` + left mouse drag | Orbit around the current center |
+| Double-click the model | Set or reset the fixed shot pivot |
 
-### 4.2 镜头规划
+### 4.2 Shot Planner
 
-| 操作 | 说明 |
+| Action | Result |
 | --- | --- |
-| `进入规划` | 切到镜头规划模式 |
-| 点击镜头点 | 选中并预览该镜头点 |
-| `+` | 从当前机位插入镜头点 |
-| `Del` | 删除当前镜头点 |
-| `C` | 清空所有镜头点 |
-| `P` | 播放 / 停止路径预览 |
+| `Enter Planner` | Switch into shot planning mode |
+| Click a shot point | Select and preview the shot point |
+| `+` | Insert a shot point from the current camera pose |
+| `Del` | Delete the selected shot point |
+| `C` | Clear all shot points |
+| `P` | Play / stop path preview |
 
-### 4.3 删除编辑
+### 4.3 Editing
 
-| 操作 | 说明 |
+| Action | Result |
 | --- | --- |
-| `E` | 进入 / 退出删除编辑模式 |
+| `E` | Enter / exit edit mode |
 | `1` | Picker |
 | `2` | Brush |
-| Picker 左键点击 | 单点选择 |
-| Picker 左键拖拽 | 框选 |
-| Brush 左键拖拽 | 刷选 |
-| `Shift` | 加选 |
-| `Ctrl/Cmd` | 减选 |
-| `[` / `]` | 调整画笔半径 |
-| `Esc` | 清空选择 |
-| `Del` | 删除选中的 splats |
-| `Ctrl+Z` | 撤销删除 |
-| `Ctrl+Y` | 重做删除 |
-| `Ctrl+S` | 导出当前可见 splats 为 `.ply` |
+| Picker left click | Single-point selection |
+| Picker left drag | Box selection |
+| Brush left drag | Brush selection |
+| `Shift` | Add to selection |
+| `Ctrl/Cmd` | Subtract from selection |
+| `[` / `]` | Change brush radius |
+| `Esc` | Clear selection |
+| `Del` | Delete selected splats |
+| `Ctrl+Z` | Undo deletion |
+| `Ctrl+Y` | Redo deletion |
+| `Ctrl+S` | Export visible splats as `.ply` |
 
-删除键语义和模式有关：
+The meaning of `Del` depends on the current mode:
 
-- 镜头规划模式下，`Del` 删除镜头点
-- 删除编辑模式下，`Del` 删除 splats
+- In shot planner mode, `Del` deletes a shot point
+- In edit mode, `Del` deletes selected splats
 
-## 5. 核心机制
+## 5. Core Mechanics
 
-### 5.1 固定中心点镜头规划
+### 5.1 Pivot-Centered Shot Planning
 
-当前镜头系统基于：
+The shot system is driven by:
 
-- `shotPivot`：固定中心点
-- `shotPoints`：镜头点数组
+- `shotPivot`: the fixed center point
+- `shotPoints`: the array of planned shot points
 
-每个镜头点存的是参数化位置，而不是手调四元数：
+Each shot point stores a parameterized position instead of a manually edited quaternion:
 
 - `radius`
 - `azimuth`
 - `height`
 
-真实相机位置由 `shotPivot + 极坐标参数` 实时计算，相机朝向统一通过 `lookAt(shotPivot)` 生成。
+The real camera position is computed from `shotPivot + polar coordinates`, and camera orientation is generated through `lookAt(shotPivot)`.
 
-### 5.2 预览与导出一致
+### 5.2 Preview and Export Stay in Sync
 
-`P` 预览和 MP4 导出都消费同一套由镜头点派生出的路径，因此：
+Both `P` preview and MP4 export consume the same path derived from the shot points, which keeps:
 
-- 路径顺序一致
-- 采样方向一致
-- 预览和导出画幅逻辑一致
+- The same path order
+- The same sampling orientation
+- The same framing logic between preview and export
 
-导出时会自动隐藏编辑辅助元素，避免把操作标记带进视频。
+Helper overlays are hidden automatically during export so they do not appear in the video.
 
-### 5.3 删除编辑与保存
+### 5.3 Editing and Saving
 
-删除编辑不修改原始源文件，而是在运行时隐藏对应 splats。保存时会把当前可见内容重新写出为一个新的 `.ply` 文件。
+Deletion editing does not modify the original source file. Instead, the runtime hides selected splats. Saving writes the current visible result into a new `.ply` file.
 
-适合用来：
+Typical use cases:
 
-- 去掉漂浮噪点
-- 裁掉场景边缘杂点
-- 保存一个更干净的展示版本
+- Remove floating noise
+- Trim scene edges
+- Save a cleaner presentation version
 
-## 6. 模型与格式
+## 6. Models and Formats
 
-当前版本不再依赖固定的 `./model.ply` 初始模型，而是由用户在页面中主动选择或拖拽本地文件。
+The current version does not depend on a fixed `./model.ply` startup asset. Users choose or drag a local file directly in the page.
 
-当前上传入口支持以下常见 3DGS 格式：
+Supported 3DGS formats:
 
 - `.ply`
 - `.splat`
 - `.spz`
 - `.ksplat`
 
-模型切换成功后，会自动重置当前镜头规划和删除编辑状态，并重新对焦到新模型。
+After a successful model switch, the app resets shot planning and editing state, then focuses the new model automatically.
 
-## 7. 已知限制
+## 7. Known Limitations
 
-- 当前是纯静态前端页面，没有后端
-- 当前只支持本地上传，不支持服务端存储或 URL 载入
-- 目前没有镜头点数值编辑器，镜头点主要通过当前机位插入
-- 截图与示例视频资源仍可继续补充
+- The project is still a pure static frontend with no backend
+- Only local uploads are supported for now; there is no server storage or URL loading yet
+- There is no numeric shot-point editor yet; shot points are still inserted from the current camera pose
+- Screenshot and demo assets can still be expanded
 
-## 8. 二次开发建议
+## 8. Development Notes
 
-如果你准备继续扩展，可以优先做这些方向：
+If you plan to extend the project, these are good next steps:
 
-- 给镜头点增加显式列表和重排能力
-- 给本地上传补更明确的加载进度和错误提示
-- 给 README / 演示页补截图和示例视频
-- 加一个构建流程，例如 `Vite`
-- 将 `viewer.js` 拆成导航、镜头规划、编辑导出等模块
+- Add a visible shot-point list with reorder support
+- Improve upload progress and error feedback
+- Add more README and demo assets
+- Introduce a build workflow such as `Vite`
+- Split `viewer.js` into navigation, planner, editing, and export modules
 
-## 9. 致谢
+## 9. Acknowledgements
 
 - [Spark.js](https://github.com/sparkjsdev/spark)
 - [Three.js](https://github.com/mrdoob/three.js)
@@ -221,4 +227,4 @@ http://localhost:8080
 
 ## 10. License
 
-本仓库采用 [MIT License](../LICENSE)。
+This repository is released under the [MIT License](../LICENSE).
