@@ -39,9 +39,9 @@
 
 ![Overview](./docs/images/overview.png)
 
-## Demo
+## Workflow Preview
 
-<img src="./assets/video.gif" alt="3DGS Studio demo" width="100%" />
+<img src="./assets/video.gif" alt="3DGS Studio workflow preview" width="100%" />
 
 ## Feature Highlights
 

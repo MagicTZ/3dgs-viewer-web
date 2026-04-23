@@ -39,9 +39,9 @@
 
 ![Overview](./docs/images/overview-zn-CN.png)
 
-## 动态演示
+## 工作流预览
 
-<img src="./assets/video-zh-CN.gif" alt="3DGS Studio demo" width="100%" />
+<img src="./assets/video-zh-CN.gif" alt="3DGS Studio 工作流预览" width="100%" />
 
 ## 功能亮点
 
