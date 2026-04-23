@@ -5,11 +5,7 @@
 <h1 align="center">3DGS Studio</h1>
 
 <p align="center">
-  Browser workstation for 3D Gaussian Splatting.
-</p>
-
-<p align="center">
-  Load local scenes, clean noisy splats, plan pivot-based camera motion, and export MP4 previews without leaving the browser.
+  Browser workstation for 3D Gaussian Splatting: load local scenes, clean noisy splats, plan pivot-based camera motion, and export MP4 previews without leaving the browser.
 </p>
 
 <p align="center">

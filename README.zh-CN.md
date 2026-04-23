@@ -5,11 +5,7 @@
 <h1 align="center">3DGS Studio</h1>
 
 <p align="center">
-  面向 3D Gaussian Splatting 的浏览器工作台。
-</p>
-
-<p align="center">
-  在浏览器中直接完成本地场景载入、噪点清理、Pivot 运镜规划与 MP4 导出。
+  面向 3D Gaussian Splatting 的浏览器工作台：在浏览器中直接完成本地场景载入、噪点清理、Pivot 运镜规划与 MP4 导出。
 </p>
 
 <p align="center">
