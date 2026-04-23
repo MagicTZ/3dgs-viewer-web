@@ -2,22 +2,48 @@
   <img src="./docs/images/logo.png" alt="3DGS Studio logo" width="1000" />
 </p>
 
+<h1 align="center">3DGS Studio</h1>
+
+<p align="center">
+  面向 3D Gaussian Splatting 的英文化优先浏览器工作台。
+</p>
+
+<p align="center">
+  在浏览器中直接完成本地场景载入、噪点清理、Pivot 运镜规划与 MP4 导出。
+</p>
+
 <p align="center">
   <a href="./README.md">English</a> | 简体中文
 </p>
 
-> 不仅仅是查看器：在浏览器中直接展示、清理、规划并导出 3D Gaussian Splatting 场景
+<p align="center">
+  <a href="./docs/guide.md">User Guide</a> ·
+  <a href="./docs/guide.zh-CN.md">中文指南</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#演进路线">演进路线</a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Built with Spark.js](https://img.shields.io/badge/Powered_by-Spark.js-orange.svg)](https://github.com/sparkjsdev/spark)
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" /></a>
+  <a href="https://github.com/sparkjsdev/spark"><img src="https://img.shields.io/badge/Powered_by-Spark.js-orange.svg" alt="Powered by Spark.js" /></a>
+</p>
 
-`3DGS Studio` 是一个纯浏览器端的 3D Gaussian Splatting (3DGS) 轻量工作台。相比于传统的单机查看工具，它专注于场景展示与二次创作流程，让你能够方便地在网页中载入模型、剔除噪点、规划相机运镜，并直接导出 MP4 演示视频。
+`3DGS Studio` 把浏览器变成一个轻量的 3DGS 展示工作台。它不只负责“看模型”，而是覆盖完整的展示闭环：载入本地场景、去掉漂浮 splats、围绕 Pivot 规划相机路径、实时预览，并最终导出 MP4 演示视频。
 
-仓库默认语言现已切换为英文，网页右上角提供 `EN / 中文` 切换按钮；本中文版 README 和使用指南会继续保留。
+仓库默认语言现已切换为英文，界面右上角提供 `EN / 中文` 切换按钮；中文版 README 和使用指南仍然保留，入口也会继续维护。
+
+## 为什么它不只是查看器
+
+| 工作流 | 你能得到什么 |
+| --- | --- |
+| 本地优先载入 | 直接拖入 `.ply`、`.splat`、`.spz`、`.ksplat` 文件，无需后端配置 |
+| 基于 Pivot 的运镜 | 双击设定稳定焦点，再围绕中心组织镜头路径 |
+| 浏览器内轻编辑 | 用 `Picker` 与 `Brush` 清理噪点，并支持撤销 / 重做 |
+| 直接导出结果 | 预览和 MP4 导出复用同一条运镜路径，减少来回对齐 |
 
 ## 界面预览
 
-当前预览资源仍是中文界面版本，因此已统一改名为带 `-zh-CN` 后缀的文件，便于后续补充英文截图。
+> 当前预览资源仍然是中文界面版本，因此保留 `-zh-CN` 后缀，方便后续补充英文截图资源。
 
 ![Overview](./docs/images/overview-zh-CN.png)
 
@@ -25,14 +51,14 @@
 
 <img src="./assets/demo-zh-CN.gif" alt="3DGS Studio demo" width="100%" />
 
-## 核心特性
+## 功能亮点
 
-- 基于 Pivot 的镜头规划与 MP4 视频导出
-- 浏览器内的 splat 删除编辑，支持 `Picker` 与 `Brush`
-- 多步骤撤销 / 重做，适合反复清理场景
-- 一键导出当前可见 splats 为干净的 `.ply` 文件
-- 支持拖拽本地 `.ply`、`.splat`、`.spz`、`.ksplat` 文件
-- 自动将上传模型的场景主平面对齐到世界坐标系
+| 模块 | 亮点 |
+| --- | --- |
+| 镜头规划 | 基于 Pivot 聚焦、离散镜头点、路径预览、MP4 导出 |
+| Splat 编辑 | `Picker`、`Brush`、多步撤销 / 重做、可见 splats `.ply` 保存 |
+| 查看器体验 | 本地上传、拖拽载入、世界坐标对齐、键盘友好操作 |
+| 双语体验 | 仓库默认英文，界面和文档均保留中文入口 |
 
 ## 快速开始
 
@@ -49,14 +75,29 @@ python -m http.server 8080
 
 然后访问 `http://localhost:8080`。
 
-### 3. 一分钟上手
+### 3. 前 60 秒怎么上手
 
 1. 点击 `Open File`，或直接把本地 3DGS 文件拖到页面中。
-2. 双击你想聚焦的主体，设置 `Pivot`（旋转中心）。
+2. 双击你想聚焦的主体，设置 `Pivot` 作为镜头中心。
 3. 进入规划模式后按 `+`，从当前机位插入镜头点。
 4. 按 `P` 预览整条路径，微调运镜效果。
 5. 按 `E` 进入编辑模式，用 `Picker` 或 `Brush` 清理噪点。
-6. 在右上角面板导出最终 MP4 视频。
+6. 在右上角面板导出最终 MP4 预览视频。
+
+## 常用操作速览
+
+| 任务 | 操作 |
+| --- | --- |
+| 载入模型 | `Open File` 或拖拽上传 |
+| 设定 Pivot | 双击场景 |
+| 进入规划 | Planner 切换按钮 |
+| 添加镜头点 | `+` |
+| 预览路径 | `P` |
+| 进入编辑 | `E` |
+| 点选 / 刷选 | `1` / `2` |
+| 删除所选 | `Del` |
+| 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y` |
+| 保存可见 splats | `Ctrl+S` |
 
 ## 详细文档
 
@@ -65,8 +106,8 @@ python -m http.server 8080
 
 ## 演进路线
 
-- [ ] 支持通过 URL 载入远程模型文件，实现项目的快速在线分享
-- [ ] 支持加载多个模型并进行 Before / After 对比审阅
+- [ ] 支持通过 URL 载入远程模型文件，实现轻量在线分享
+- [ ] 支持多模型 Before / After 对比审阅
 - [ ] 引入 Vite 等现代构建工具，并将 `viewer.js` 拆分为模块
 - [ ] 增强编辑能力，例如 3D 裁切盒剔除与局部 ROI 提取
 

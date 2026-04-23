@@ -2,22 +2,48 @@
   <img src="./docs/images/logo.png" alt="3DGS Studio logo" width="1000" />
 </p>
 
+<h1 align="center">3DGS Studio</h1>
+
+<p align="center">
+  English-first browser workstation for 3D Gaussian Splatting.
+</p>
+
+<p align="center">
+  Load local scenes, clean noisy splats, plan pivot-based camera motion, and export MP4 previews without leaving the browser.
+</p>
+
 <p align="center">
   English | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-> Browser-native viewing, cleanup, shot planning, and MP4 export for 3D Gaussian Splatting scenes.
+<p align="center">
+  <a href="./docs/guide.md">User Guide</a> ·
+  <a href="./docs/guide.zh-CN.md">中文指南</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Built with Spark.js](https://img.shields.io/badge/Powered_by-Spark.js-orange.svg)](https://github.com/sparkjsdev/spark)
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" /></a>
+  <a href="https://github.com/sparkjsdev/spark"><img src="https://img.shields.io/badge/Powered_by-Spark.js-orange.svg" alt="Powered by Spark.js" /></a>
+</p>
 
-`3DGS Studio` is a lightweight browser workstation for 3D Gaussian Splatting (3DGS). Instead of acting as a passive viewer, it focuses on the full presentation workflow: load a local scene, remove noisy splats, plan camera motion around a pivot, and export an MP4 preview directly in the browser.
+`3DGS Studio` turns the browser into a lightweight 3DGS presentation workstation. Instead of stopping at scene inspection, it covers the full loop: load a local model, remove stray splats, block out a camera path around a pivot, preview the motion, and export the result as MP4.
 
-The repository now defaults to English. The web UI includes an `EN / 中文` toggle, and the Chinese documentation remains available from the links above.
+The repository now defaults to English. The UI includes an `EN / 中文` switcher, and the Chinese README and guide remain available.
+
+## Why It Feels Different
+
+| Workflow | What You Get |
+| --- | --- |
+| Local-first loading | Drag in `.ply`, `.splat`, `.spz`, or `.ksplat` files directly, with no backend setup |
+| Pivot-based planning | Double-click to set a stable focal center, then build camera motion around it |
+| Cleanup inside the viewer | Remove noisy splats with `Picker` and `Brush`, plus undo and redo support |
+| Export-ready output | Reuse the same planned path for both live preview and MP4 export |
 
 ## Interface Preview
 
-Current preview assets still show the Chinese UI and are temporarily kept with a `-zh-CN` suffix until English screenshots are captured.
+> Current preview assets still show the Chinese UI and are intentionally kept with a `-zh-CN` suffix until the English screenshots are replaced.
 
 ![Overview](./docs/images/overview-zh-CN.png)
 
@@ -25,14 +51,14 @@ Current preview assets still show the Chinese UI and are temporarily kept with a
 
 <img src="./assets/demo-zh-CN.gif" alt="3DGS Studio demo" width="100%" />
 
-## Key Features
+## Feature Highlights
 
-- Pivot-based shot planning for smooth camera previews and MP4 exports
-- Browser-only splat cleanup with `Picker` and `Brush` deletion workflows
-- Undo / redo support for iterative cleanup passes
-- One-click `.ply` export for the visible splats after editing
-- Local-file workflow with drag-and-drop support for `.ply`, `.splat`, `.spz`, and `.ksplat`
-- Automatic world-up alignment for uploaded scenes
+| Area | Highlights |
+| --- | --- |
+| Shot Planning | Pivot-based camera focus, discrete shot points, path preview, MP4 export |
+| Splat Editing | `Picker`, `Brush`, multi-step undo/redo, visible-splat `.ply` save |
+| Viewer Workflow | Local uploads, drag and drop, world-up alignment, keyboard-friendly controls |
+| Bilingual UX | English-default repository and UI, with direct Chinese access preserved |
 
 ## Quick Start
 
@@ -49,14 +75,29 @@ python -m http.server 8080
 
 Then open `http://localhost:8080`.
 
-### 3. One-Minute Workflow
+### 3. First 60 Seconds
 
-1. Load a local 3DGS file by clicking `Open File` or dragging it into the page.
+1. Click `Open File`, or drag a local 3DGS model into the page.
 2. Double-click the subject you want to focus on to set the `Pivot`.
 3. Enter planner mode and press `+` to add shot points from the current camera view.
 4. Press `P` to preview the path and refine the motion.
-5. Press `E` to enter editing mode and clean noisy splats with `Picker` or `Brush`.
-6. Export the final result as an MP4 from the panel in the upper-right corner.
+5. Press `E` to enter edit mode and clean noisy splats with `Picker` or `Brush`.
+6. Export the result from the upper-right panel as an MP4 preview.
+
+## Controls at a Glance
+
+| Task | Input |
+| --- | --- |
+| Load a model | `Open File` or drag and drop |
+| Set pivot | Double-click scene |
+| Enter planner | Planner toggle |
+| Add shot point | `+` |
+| Preview path | `P` |
+| Enter editing | `E` |
+| Picker / Brush | `1` / `2` |
+| Delete selection | `Del` |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Y` |
+| Save visible splats | `Ctrl+S` |
 
 ## Documentation
 
