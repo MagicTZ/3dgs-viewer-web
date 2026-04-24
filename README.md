@@ -32,7 +32,7 @@
 | --- | --- |
 | Local-first loading | Drag in `.ply`, `.splat`, `.spz`, or `.ksplat` files directly, with no backend setup |
 | Pivot-based planning | Double-click to set a stable focal center, then build camera motion around it |
-| Cleanup inside the viewer | Remove noisy splats with `Picker` and `Brush`, plus undo and redo support |
+| Cleanup inside the viewer | Remove noisy splats manually or preview automatic floating-splat candidates before applying |
 | Export-ready output | Reuse the same planned path for both live preview and MP4 export |
 
 ## Interface Preview
@@ -48,7 +48,7 @@
 | Area | Highlights |
 | --- | --- |
 | Shot Planning | Pivot-based camera focus, discrete shot points, path preview, MP4 export |
-| Splat Editing | `Picker`, `Brush`, multi-step undo/redo, visible-splat `.ply` save |
+| Splat Editing | `Picker`, `Brush`, automatic floater candidate analysis, multi-step undo/redo, visible-splat `.ply` save |
 | Viewer Workflow | Local uploads, drag and drop, world-up alignment, keyboard-friendly controls |
 | Presentation Loop | Load, clean, plan, preview, and export in one place |
 
@@ -73,7 +73,7 @@ Then open `http://localhost:8080`.
 2. Double-click the subject you want to focus on to set the `Pivot`.
 3. Enter planner mode and press `+` to add shot points from the current camera view.
 4. Press `P` to preview the path and refine the motion.
-5. Press `E` to enter edit mode and clean noisy splats with `Picker` or `Brush`.
+5. Press `E` to enter edit mode and clean noisy splats with `Picker`, `Brush`, or `Analyze Floaters`.
 6. Export the result from the upper-right panel as an MP4 preview.
 
 ## Controls at a Glance
@@ -98,7 +98,7 @@ Then open `http://localhost:8080`.
 
 ## Roadmap
 
-- [ ] Add automatic floating-splat filtering for cleaner scenes with less manual cleanup
+- [x] Add automatic floating-splat filtering for cleaner scenes with less manual cleanup
 - [ ] Add preset camera curves and best-path generation for faster shot planning
 - [ ] Add per-camera pose fine-tuning for precise adjustment of individual viewpoints
 

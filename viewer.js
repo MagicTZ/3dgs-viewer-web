@@ -85,6 +85,14 @@ const clearSelectionBtn = document.getElementById("clearSelectionBtn");
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const deleteSelectionBtn = document.getElementById("deleteSelectionBtn");
+const cleanupScalePercentileInput = document.getElementById("cleanupScalePercentileInput");
+const cleanupMinScaleRatioInput = document.getElementById("cleanupMinScaleRatioInput");
+const cleanupNeighborRadiusInput = document.getElementById("cleanupNeighborRadiusInput");
+const cleanupMinNeighborsInput = document.getElementById("cleanupMinNeighborsInput");
+const cleanupOpacityFloorInput = document.getElementById("cleanupOpacityFloorInput");
+const analyzeFloatersBtn = document.getElementById("analyzeFloatersBtn");
+const applyFloaterFilterBtn = document.getElementById("applyFloaterFilterBtn");
+const cleanupStatusEl = document.getElementById("cleanupStatus");
 const saveSceneBtn = document.getElementById("saveSceneBtn");
 const saveStatusEl = document.getElementById("saveStatus");
 const activeToolLabelEl = document.getElementById("activeToolLabel");
@@ -193,6 +201,17 @@ const I18N = {
     "edit.hint.enter": "Press E to enter edit mode. Left click selects, right drag and wheel navigate.",
     "edit.hint.picker": "Click to pick, drag to box-select. Shift adds, Ctrl/Cmd subtracts.",
     "edit.hint.brush": "Left drag to brush-select. [ / ] changes radius. Shift adds, Ctrl/Cmd subtracts.",
+    "cleanup.scalePercentile": "Scale Percentile",
+    "cleanup.minScaleRatio": "Min Scale Ratio",
+    "cleanup.neighborRadius": "Neighbor Radius Ratio",
+    "cleanup.minNeighbors": "Min Neighbors",
+    "cleanup.opacityFloor": "Opacity Floor",
+    "cleanup.analyze": "Analyze Floaters",
+    "cleanup.apply": "Apply Filter",
+    "cleanup.status.ready": "Ready to analyze floating splats.",
+    "cleanup.status.analyzed": "Selected {count} candidates from {largeCount} large splats. Scale >= {scaleThreshold}, radius {radius}.",
+    "cleanup.status.none": "No floating-splat candidates found.",
+    "cleanup.status.applied": "Filtered {count} floating-splat candidates.",
     "tool.picker": "Picker",
     "tool.brush": "Brush",
     "play.status.stopped": "Paused",
@@ -297,6 +316,17 @@ const I18N = {
     "edit.hint.enter": "按 E 进入编辑。左键选择，右键拖拽与滚轮导航。",
     "edit.hint.picker": "单击选点，拖拽框选。Shift 加选，Ctrl/Cmd 减选。",
     "edit.hint.brush": "左键刷选，[ / ] 调半径。Shift 加选，Ctrl/Cmd 减选。",
+    "cleanup.scalePercentile": "尺度分位数",
+    "cleanup.minScaleRatio": "最小尺度比例",
+    "cleanup.neighborRadius": "邻域半径比例",
+    "cleanup.minNeighbors": "最少邻居数",
+    "cleanup.opacityFloor": "透明度下限",
+    "cleanup.analyze": "分析漂浮球",
+    "cleanup.apply": "应用过滤",
+    "cleanup.status.ready": "可分析漂浮 splats。",
+    "cleanup.status.analyzed": "已从 {largeCount} 个大尺度 splats 中选中 {count} 个候选。尺度 >= {scaleThreshold}，半径 {radius}。",
+    "cleanup.status.none": "未发现漂浮 splat 候选。",
+    "cleanup.status.applied": "已过滤 {count} 个漂浮 splat 候选。",
     "tool.picker": "点选",
     "tool.brush": "刷选",
     "play.status.stopped": "已停止",
@@ -407,6 +437,8 @@ const editState = {
   hiddenMask: null,
   selectedCount: 0,
   hiddenCount: 0,
+  cleanupCandidateCount: 0,
+  cleanupLastStats: null,
   undoStack: [],
   redoStack: [],
   projectionX: null,
@@ -449,6 +481,7 @@ let splats = null;
 const uiMessageState = {
   playStatus: { key: "", params: {} },
   saveStatus: { key: "", params: {} },
+  cleanupStatus: { key: "", params: {} },
   exportStatus: { key: "", params: {} }
 };
 
@@ -472,6 +505,8 @@ function renderUiMessage(slot) {
     playStatusEl.textContent = text;
   } else if (slot === "saveStatus") {
     saveStatusEl.textContent = text;
+  } else if (slot === "cleanupStatus") {
+    cleanupStatusEl.textContent = text;
   } else if (slot === "exportStatus") {
     exportStatusEl.textContent = text;
   }
@@ -480,6 +515,7 @@ function renderUiMessage(slot) {
 function renderAllUiMessages() {
   renderUiMessage("playStatus");
   renderUiMessage("saveStatus");
+  renderUiMessage("cleanupStatus");
   renderUiMessage("exportStatus");
 }
 
@@ -575,6 +611,8 @@ function clearEditState() {
   editState.hiddenMask = null;
   editState.selectedCount = 0;
   editState.hiddenCount = 0;
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
   editState.undoStack.length = 0;
   editState.redoStack.length = 0;
   editState.projectionX = null;
@@ -582,6 +620,7 @@ function clearEditState() {
   editState.projectionDepth = null;
   editState.projectionVisible = null;
   setUiMessage("saveStatus");
+  setUiMessage("cleanupStatus");
 }
 
 function clearShotState() {
@@ -2037,6 +2076,13 @@ function updateEditUi() {
   undoBtn.disabled = !hasModel || editState.undoStack.length === 0 || blocked;
   redoBtn.disabled = !hasModel || editState.redoStack.length === 0 || blocked;
   deleteSelectionBtn.disabled = !hasModel || editState.selectedCount === 0 || blocked;
+  cleanupScalePercentileInput.disabled = !hasVisibleSplats || blocked;
+  cleanupMinScaleRatioInput.disabled = !hasVisibleSplats || blocked;
+  cleanupNeighborRadiusInput.disabled = !hasVisibleSplats || blocked;
+  cleanupMinNeighborsInput.disabled = !hasVisibleSplats || blocked;
+  cleanupOpacityFloorInput.disabled = !hasVisibleSplats || blocked;
+  analyzeFloatersBtn.disabled = !hasVisibleSplats || blocked;
+  applyFloaterFilterBtn.disabled = !hasVisibleSplats || editState.cleanupCandidateCount === 0 || blocked;
 
   if (modelState.loading) {
     editHintEl.textContent = t("edit.hint.loading");
@@ -2145,6 +2191,8 @@ function initializeEditing(mesh, focus) {
   editState.hiddenMask = hiddenMask;
   editState.selectedCount = 0;
   editState.hiddenCount = 0;
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
   editState.undoStack.length = 0;
   editState.redoStack.length = 0;
   editState.projectionX = projectionX;
@@ -2152,6 +2200,7 @@ function initializeEditing(mesh, focus) {
   editState.projectionDepth = projectionDepth;
   editState.projectionVisible = projectionVisible;
 
+  setUiMessage("cleanupStatus", "cleanup.status.ready");
   updateEditUi();
   updateShotUi();
 }
@@ -2275,21 +2324,21 @@ function setSelected(index, selected, changedIndices) {
 }
 
 function commitSelectionChange(changedIndices) {
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
   applyVisualChanges(changedIndices);
   updateEditUi();
 }
 
-function deleteSelectedSplats() {
-  if (!editState.ready || editState.selectedCount === 0) {
-    return;
-  }
-
+function hideSplatIndices(indices, type = "delete") {
   const deletedIndices = [];
-  for (let index = 0; index < editState.numSplats; index += 1) {
-    if (editState.selectedMask[index] && !editState.hiddenMask[index]) {
-      editState.selectedMask[index] = 0;
+  for (const index of indices) {
+    if (!editState.hiddenMask[index]) {
+      if (editState.selectedMask[index]) {
+        editState.selectedMask[index] = 0;
+        editState.selectedCount -= 1;
+      }
       editState.hiddenMask[index] = 1;
-      editState.selectedCount -= 1;
       editState.hiddenCount += 1;
       deletedIndices.push(index);
     }
@@ -2300,7 +2349,9 @@ function deleteSelectedSplats() {
     return;
   }
 
-  editState.undoStack.push({ type: "delete", indices: Uint32Array.from(deletedIndices) });
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
+  editState.undoStack.push({ type, indices: Uint32Array.from(deletedIndices) });
   if (editState.undoStack.length > HISTORY_LIMIT) {
     editState.undoStack.shift();
   }
@@ -2311,12 +2362,238 @@ function deleteSelectedSplats() {
   updateEditUi();
 }
 
+function deleteSelectedSplats() {
+  if (!editState.ready || editState.selectedCount === 0) {
+    return;
+  }
+  hideSplatIndices(collectSelectedIndices());
+}
+
+function readCleanupNumber(input, fallback, { min = -Infinity, max = Infinity, integer = false } = {}) {
+  const rawValue = Number.parseFloat(input.value);
+  const parsed = Number.isFinite(rawValue) ? rawValue : fallback;
+  const value = integer ? Math.round(parsed) : parsed;
+  const clamped = THREE.MathUtils.clamp(value, min, max);
+  input.value = integer ? String(clamped) : String(clamped);
+  return clamped;
+}
+
+function getCleanupSettings() {
+  return {
+    scalePercentile: readCleanupNumber(cleanupScalePercentileInput, 95, { min: 50, max: 99.9 }),
+    minScaleRatio: readCleanupNumber(cleanupMinScaleRatioInput, 0.015, { min: 0, max: 1 }),
+    neighborRadiusRatio: readCleanupNumber(cleanupNeighborRadiusInput, 0.01, { min: 0.0001, max: 1 }),
+    minNeighbors: readCleanupNumber(cleanupMinNeighborsInput, 20, { min: 0, max: 200, integer: true }),
+    opacityFloor: readCleanupNumber(cleanupOpacityFloorInput, 0.02, { min: 0, max: 1 })
+  };
+}
+
+function formatCleanupNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(1);
+  }
+  if (Math.abs(value) >= 1) {
+    return value.toFixed(3);
+  }
+  return value.toPrecision(3);
+}
+
+function makeGridKey(ix, iy, iz) {
+  return `${ix},${iy},${iz}`;
+}
+
+function buildVisibleSplatGrid(radius) {
+  const grid = new Map();
+  const invRadius = 1 / radius;
+
+  for (let index = 0; index < editState.numSplats; index += 1) {
+    if (editState.hiddenMask[index]) {
+      continue;
+    }
+
+    const offset = index * 3;
+    const ix = Math.floor(editState.worldCenters[offset] * invRadius);
+    const iy = Math.floor(editState.worldCenters[offset + 1] * invRadius);
+    const iz = Math.floor(editState.worldCenters[offset + 2] * invRadius);
+    const key = makeGridKey(ix, iy, iz);
+    let bucket = grid.get(key);
+    if (!bucket) {
+      bucket = [];
+      grid.set(key, bucket);
+    }
+    bucket.push(index);
+  }
+
+  return grid;
+}
+
+function countNeighborsWithinRadius(index, grid, radius, minNeighbors) {
+  if (minNeighbors <= 0) {
+    return 0;
+  }
+
+  const radiusSq = radius * radius;
+  const invRadius = 1 / radius;
+  const offset = index * 3;
+  const x = editState.worldCenters[offset];
+  const y = editState.worldCenters[offset + 1];
+  const z = editState.worldCenters[offset + 2];
+  const ix = Math.floor(x * invRadius);
+  const iy = Math.floor(y * invRadius);
+  const iz = Math.floor(z * invRadius);
+  let count = 0;
+
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const bucket = grid.get(makeGridKey(ix + dx, iy + dy, iz + dz));
+        if (!bucket) {
+          continue;
+        }
+        for (const neighborIndex of bucket) {
+          if (neighborIndex === index || editState.hiddenMask[neighborIndex]) {
+            continue;
+          }
+          const neighborOffset = neighborIndex * 3;
+          const nx = editState.worldCenters[neighborOffset] - x;
+          const ny = editState.worldCenters[neighborOffset + 1] - y;
+          const nz = editState.worldCenters[neighborOffset + 2] - z;
+          if (nx * nx + ny * ny + nz * nz <= radiusSq) {
+            count += 1;
+            if (count >= minNeighbors) {
+              return count;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+function collectVisibleScaleStats() {
+  const visibleCount = getVisibleSplatCount();
+  const scales = new Float32Array(visibleCount);
+  const box = new THREE.Box3();
+  let scaleOffset = 0;
+
+  for (let index = 0; index < editState.numSplats; index += 1) {
+    if (editState.hiddenMask[index]) {
+      continue;
+    }
+
+    const vecOffset = index * 3;
+    const maxScale = Math.max(
+      editState.baseScales[vecOffset],
+      editState.baseScales[vecOffset + 1],
+      editState.baseScales[vecOffset + 2]
+    );
+    scales[scaleOffset] = maxScale;
+    scaleOffset += 1;
+    tempVecA.set(
+      editState.worldCenters[vecOffset],
+      editState.worldCenters[vecOffset + 1],
+      editState.worldCenters[vecOffset + 2]
+    );
+    box.expandByPoint(tempVecA);
+  }
+
+  scales.sort();
+  const diagonal = visibleCount > 1 ? box.getSize(tempVecA).length() : 1;
+  return { visibleCount, scales, diagonal: Math.max(diagonal, 1e-6) };
+}
+
+function analyzeFloatingSplats() {
+  if (!editState.ready || getVisibleSplatCount() === 0) {
+    return;
+  }
+
+  const settings = getCleanupSettings();
+  const stats = collectVisibleScaleStats();
+  const percentileIndex = Math.min(
+    stats.scales.length - 1,
+    Math.max(0, Math.floor((settings.scalePercentile / 100) * (stats.scales.length - 1)))
+  );
+  const percentileScale = stats.scales[percentileIndex] ?? 0;
+  const minSceneScale = stats.diagonal * settings.minScaleRatio;
+  const scaleThreshold = Math.max(percentileScale, minSceneScale);
+  const neighborRadius = Math.max(stats.diagonal * settings.neighborRadiusRatio, scaleThreshold);
+  const grid = buildVisibleSplatGrid(neighborRadius);
+  const candidates = [];
+  let largeCount = 0;
+
+  for (let index = 0; index < editState.numSplats; index += 1) {
+    if (editState.hiddenMask[index]) {
+      continue;
+    }
+
+    const vecOffset = index * 3;
+    const maxScale = Math.max(
+      editState.baseScales[vecOffset],
+      editState.baseScales[vecOffset + 1],
+      editState.baseScales[vecOffset + 2]
+    );
+    if (maxScale < scaleThreshold) {
+      continue;
+    }
+
+    largeCount += 1;
+    const opacity = editState.baseOpacities[index];
+    const neighborCount = countNeighborsWithinRadius(index, grid, neighborRadius, settings.minNeighbors);
+    const isolated = settings.minNeighbors > 0 && neighborCount < settings.minNeighbors;
+    const transparent = settings.opacityFloor > 0 && opacity < settings.opacityFloor;
+    if (isolated || transparent) {
+      candidates.push(index);
+    }
+  }
+
+  const changedIndices = clearSelection([]);
+  for (const index of candidates) {
+    setSelected(index, true, changedIndices);
+  }
+  editState.cleanupCandidateCount = candidates.length;
+  editState.cleanupLastStats = {
+    largeCount,
+    scaleThreshold,
+    neighborRadius
+  };
+  applyVisualChanges(changedIndices);
+
+  if (candidates.length > 0) {
+    setUiMessage("cleanupStatus", "cleanup.status.analyzed", {
+      count: candidates.length,
+      largeCount,
+      scaleThreshold: formatCleanupNumber(scaleThreshold),
+      radius: formatCleanupNumber(neighborRadius)
+    });
+  } else {
+    setUiMessage("cleanupStatus", "cleanup.status.none");
+  }
+  updateEditUi();
+}
+
+function applyFloatingSplatFilter() {
+  if (!editState.ready || editState.cleanupCandidateCount === 0 || editState.selectedCount === 0) {
+    return;
+  }
+
+  const candidates = collectSelectedIndices();
+  hideSplatIndices(candidates, "floater-filter");
+  setUiMessage("cleanupStatus", "cleanup.status.applied", { count: candidates.length });
+}
+
 function undoDelete() {
   const action = editState.undoStack.pop();
   if (!action) {
     return;
   }
 
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
   const changedIndices = [];
   for (const index of action.indices) {
     if (editState.hiddenMask[index]) {
@@ -2337,6 +2614,8 @@ function redoDelete() {
     return;
   }
 
+  editState.cleanupCandidateCount = 0;
+  editState.cleanupLastStats = null;
   const changedIndices = [];
   for (const index of action.indices) {
     if (!editState.hiddenMask[index]) {
@@ -3587,6 +3866,24 @@ clearSelectionBtn.addEventListener("click", () => {
 undoBtn.addEventListener("click", undoDelete);
 redoBtn.addEventListener("click", redoDelete);
 deleteSelectionBtn.addEventListener("click", deleteSelectedSplats);
+analyzeFloatersBtn.addEventListener("click", analyzeFloatingSplats);
+applyFloaterFilterBtn.addEventListener("click", applyFloatingSplatFilter);
+for (const input of [
+  cleanupScalePercentileInput,
+  cleanupMinScaleRatioInput,
+  cleanupNeighborRadiusInput,
+  cleanupMinNeighborsInput,
+  cleanupOpacityFloorInput
+]) {
+  input.addEventListener("input", () => {
+    editState.cleanupCandidateCount = 0;
+    editState.cleanupLastStats = null;
+    if (editState.ready) {
+      setUiMessage("cleanupStatus", "cleanup.status.ready");
+    }
+    updateEditUi();
+  });
+}
 saveSceneBtn.addEventListener("click", () => {
   void saveEditedScene();
 });

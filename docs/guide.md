@@ -147,6 +147,15 @@ Notes:
 | `Ctrl+Y` | Redo deletion |
 | `Ctrl+S` | Export visible splats as `.ply` |
 
+The editing panel also includes `Analyze Floaters`. It previews likely large floating Gaussians by combining:
+
+- high scale percentile
+- minimum scale relative to the visible scene size
+- local neighbor count within a scene-relative radius
+- optional low-opacity matching
+
+Analysis only selects candidates. `Apply Filter` hides those selected candidates and keeps the result undoable through `Ctrl+Z`.
+
 The meaning of `Del` depends on the current mode:
 
 - In shot planner mode, `Del` deletes a shot point
@@ -186,6 +195,7 @@ Deletion editing does not modify the original source file. Instead, the runtime 
 Typical use cases:
 
 - Remove floating noise
+- Preview and apply automatic large-floater filtering
 - Trim scene edges
 - Save a cleaner presentation version
 
