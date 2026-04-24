@@ -174,6 +174,27 @@
     #editStats {
       margin-top: 8px; font-size: 12px; color: #ccc; line-height: 1.5;
     }
+    .cleanupGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .cleanupGrid label {
+      margin: 0;
+      font-size: 11px;
+      color: #c6d0d6;
+    }
+    .cleanupGrid input {
+      margin-top: 2px;
+      margin-bottom: 0;
+    }
+    #cleanupStatus {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #aaa;
+      min-height: 16px;
+    }
     #modelPanel {
       position: static; color: white;
       font-family: var(--font-ui); font-size: 13px; background: rgba(0,0,0,0.82);
@@ -498,6 +519,33 @@
         <button id="redoBtn" data-i18n="edit.redo">Redo (Ctrl+Y)</button>
         <button id="deleteSelectionBtn" data-i18n="edit.deleteSelection">Delete Selected (Del)</button>
       </div>
+      <div class="cleanupGrid">
+        <label for="cleanupScalePercentileInput">
+          <span data-i18n="cleanup.scalePercentile">Scale Percentile</span>
+          <input id="cleanupScalePercentileInput" type="number" value="95" min="50" max="99.9" step="0.1">
+        </label>
+        <label for="cleanupMinScaleRatioInput">
+          <span data-i18n="cleanup.minScaleRatio">Min Scale Ratio</span>
+          <input id="cleanupMinScaleRatioInput" type="number" value="0.015" min="0" max="1" step="0.001">
+        </label>
+        <label for="cleanupNeighborRadiusInput">
+          <span data-i18n="cleanup.neighborRadius">Neighbor Radius Ratio</span>
+          <input id="cleanupNeighborRadiusInput" type="number" value="0.01" min="0.0001" max="1" step="0.001">
+        </label>
+        <label for="cleanupMinNeighborsInput">
+          <span data-i18n="cleanup.minNeighbors">Min Neighbors</span>
+          <input id="cleanupMinNeighborsInput" type="number" value="20" min="0" max="200" step="1">
+        </label>
+        <label for="cleanupOpacityFloorInput">
+          <span data-i18n="cleanup.opacityFloor">Opacity Floor</span>
+          <input id="cleanupOpacityFloorInput" type="number" value="0.02" min="0" max="1" step="0.001">
+        </label>
+      </div>
+      <div class="toolRow">
+        <button id="analyzeFloatersBtn" data-i18n="cleanup.analyze">Analyze Floaters</button>
+        <button id="applyFloaterFilterBtn" data-i18n="cleanup.apply">Apply Filter</button>
+      </div>
+      <div id="cleanupStatus"></div>
       <div class="toolRow">
         <button id="saveSceneBtn">Save .ply (Ctrl+S)</button>
       </div>
@@ -509,6 +557,6 @@
       </div>
     </div>
   </div>
-  <script type="module" src="./viewer.js?v=20260422-view-gizmo-align"></script>
+  <script type="module" src="./viewer.js?v=20260424-floater-filter"></script>
 </body>
 </html>
